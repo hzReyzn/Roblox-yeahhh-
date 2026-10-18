@@ -1,1 +1,196 @@
+-- Reyzn X | Golden Hour X
+-- Standalone cinematic lighting preset (client-side)
+-- No GUI, no external assets, no frame-by-frame loops.
+-- Run once to enable; run again to restore the original appearance.
 
+local Lighting = game:GetService("Lighting")
+local TweenService = game:GetService("TweenService")
+
+local environment = _G
+pcall(function()
+    if type(getgenv) == "function" then
+        environment = getgenv()
+    end
+end)
+
+local KEY = "__ReyznX_GoldenHour"
+local previous = environment[KEY]
+if type(previous) == "table" and type(previous.Stop) == "function" then
+    previous.Stop()
+    return
+end
+
+local PREFIX = "ReyznX_GoldenHour_"
+local TRANSITION = 1.65
+local RESTORE_TIME = 1.2
+local activeTweens = {}
+local active = true
+
+local function snapshot(object, names)
+    local result = {}
+    for _, name in ipairs(names) do
+        local ok, value = pcall(function()
+            return object[name]
+        end)
+        if ok then
+            result[name] = value
+        end
+    end
+    return result
+end
+
+local function fade(object, target, duration)
+    local tween
+    local ok, err = pcall(function()
+        tween = TweenService:Create(
+            object,
+            TweenInfo.new(duration, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut),
+            target
+        )
+        tween:Play()
+    end)
+    if ok and tween then
+        table.insert(activeTweens, tween)
+    else
+        warn("[Golden Hour X] Tween skipped: " .. tostring(err))
+    end
+end
+
+local function cancelTweens()
+    for _, tween in ipairs(activeTweens) do
+        pcall(function() tween:Cancel() end)
+    end
+    table.clear(activeTweens)
+end
+
+local lightNames = {
+    "ClockTime", "Brightness", "ExposureCompensation",
+    "Ambient", "OutdoorAmbient", "ColorShift_Top", "ColorShift_Bottom",
+    "EnvironmentDiffuseScale", "EnvironmentSpecularScale",
+    "ShadowSoftness", "FogColor", "FogStart", "FogEnd"
+}
+local originalLight = snapshot(Lighting, lightNames)
+
+local atmosphere = Lighting:FindFirstChildOfClass("Atmosphere")
+local createdAtmosphere = atmosphere == nil
+if not atmosphere then
+    atmosphere = Instance.new("Atmosphere")
+    atmosphere.Name = PREFIX .. "Atmosphere"
+    atmosphere.Density = 0
+    atmosphere.Haze = 0
+    atmosphere.Glare = 0
+    atmosphere.Parent = Lighting
+end
+
+local atmosphereNames = { "Density", "Offset", "Color", "Decay", "Glare", "Haze" }
+local originalAtmosphere = nil
+if not createdAtmosphere then
+    originalAtmosphere = snapshot(atmosphere, atmosphereNames)
+end
+
+-- Remove leftovers of *our own* effects if a previous execution lost its state.
+for _, item in ipairs(Lighting:GetChildren()) do
+    if item.Name == PREFIX .. "Color"
+        or item.Name == PREFIX .. "Bloom"
+        or item.Name == PREFIX .. "SunRays" then
+        item:Destroy()
+    end
+end
+
+local color = Instance.new("ColorCorrectionEffect")
+color.Name = PREFIX .. "Color"
+color.Brightness = 0
+color.Contrast = 0
+color.Saturation = 0
+color.TintColor = Color3.new(1, 1, 1)
+color.Parent = Lighting
+
+local bloom = Instance.new("BloomEffect")
+bloom.Name = PREFIX .. "Bloom"
+bloom.Intensity = 0
+bloom.Size = 23
+bloom.Threshold = 1.25
+bloom.Parent = Lighting
+
+local rays = Instance.new("SunRaysEffect")
+rays.Name = PREFIX .. "SunRays"
+rays.Intensity = 0
+rays.Spread = 0.82
+rays.Parent = Lighting
+
+-- Low-cost cinematic color grade: warm highlights, cool shadows,
+-- gentle atmospheric scattering and a soft solar glow.
+fade(Lighting, {
+    ClockTime = 17.45,
+    Brightness = 2.15,
+    ExposureCompensation = -0.05,
+    Ambient = Color3.fromRGB(112, 96, 92),
+    OutdoorAmbient = Color3.fromRGB(169, 132, 106),
+    ColorShift_Top = Color3.fromRGB(255, 193, 131),
+    ColorShift_Bottom = Color3.fromRGB(96, 105, 130),
+    EnvironmentDiffuseScale = 0.43,
+    EnvironmentSpecularScale = 0.38,
+    ShadowSoftness = 0.42,
+    FogColor = Color3.fromRGB(248, 185, 128),
+    FogStart = 180,
+    FogEnd = 1400
+}, TRANSITION)
+
+fade(atmosphere, {
+    Density = 0.25,
+    Offset = 0.12,
+    Color = Color3.fromRGB(255, 211, 164),
+    Decay = Color3.fromRGB(241, 163, 114),
+    Glare = 0.32,
+    Haze = 1.35
+}, TRANSITION)
+
+fade(color, {
+    TintColor = Color3.fromRGB(255, 237, 214),
+    Brightness = 0.015,
+    Contrast = 0.12,
+    Saturation = 0.06
+}, TRANSITION)
+
+fade(bloom, { Intensity = 0.20 }, TRANSITION)
+fade(rays, { Intensity = 0.085 }, TRANSITION)
+
+local controller = {}
+function controller.Stop()
+    if not active then return end
+    active = false
+    cancelTweens()
+
+    fade(Lighting, originalLight, RESTORE_TIME)
+    if createdAtmosphere then
+        fade(atmosphere, { Density = 0, Haze = 0, Glare = 0 }, RESTORE_TIME)
+    else
+        fade(atmosphere, originalAtmosphere, RESTORE_TIME)
+    end
+
+    fade(color, {
+        Brightness = 0,
+        Contrast = 0,
+        Saturation = 0,
+        TintColor = Color3.new(1, 1, 1)
+    }, RESTORE_TIME)
+    fade(bloom, { Intensity = 0 }, RESTORE_TIME)
+    fade(rays, { Intensity = 0 }, RESTORE_TIME)
+
+    task.delay(RESTORE_TIME + 0.08, function()
+        for _, effect in ipairs({ color, bloom, rays }) do
+            if effect and effect.Parent then effect:Destroy() end
+        end
+        if createdAtmosphere and atmosphere and atmosphere.Parent then
+            atmosphere:Destroy()
+        end
+        if environment[KEY] == controller then
+            environment[KEY] = nil
+        end
+        cancelTweens()
+    end)
+    print("[Reyzn X] Golden Hour OFF | Original lighting restored")
+end
+
+environment[KEY] = controller
+print("[Reyzn X] Golden Hour ON | Run the same loadstring to disable")
