@@ -3,12 +3,10 @@
 -- One self-contained file: no downloaded code, hidden properties or graphics-engine overrides.
 -- API returned at the bottom: Activate(name), DisableAll(), SetQuality(name), SetSkybox(bool), Destroy().
 --
--- SKY ASSET POLICY / LIMITATION:
--- Six external photographic cubemaps could not be independently verified. Every preset therefore
--- uses an individual atmospheric composition over Roblox's documented, continuous default cube.
--- No catalog/model IDs are passed off as image IDs. ContentProvider verifies all six bundled faces;
--- failure/timeout preserves the game's original sky. The GUI explicitly labels this fallback.
--- Provenance: https://github.com/Roblox/creator-docs/blob/main/content/en-us/reference/engine/classes/Sky.yaml
+-- Sky images are complete six-face sets, checked against Roblox image metadata and thumbnails.
+-- Each set is also preloaded on demand in the running experience. If permission/loading fails,
+-- keep the original sky while applying the preset's native atmosphere and clouds independently.
+-- SkyboxManager below records the verified face mapping; no model/decal IDs masquerade as textures.
 -- Native APIs: https://create.roblox.com/docs/environment/atmosphere
 -- https://create.roblox.com/docs/environment/skybox | https://create.roblox.com/docs/effects/post-processing
 -- Aurora is a small layered Beam simulation, not a photographic panorama or GPU shader.
@@ -199,69 +197,69 @@ local PRESET_ORDER = {"Golden Hour", "Moonlight", "Cinematic Realism", "Aurora B
 local Presets = {
     ["Golden Hour"] = {
         subtitle = "Warm light · long shadows", accent = rgb(239, 186, 115), code = "GH",
-        light = {ClockTime = 17.35, GeographicLatitude = 30, Brightness = 2.15, ExposureCompensation = -0.12,
-            Ambient = rgb(63, 54, 62), OutdoorAmbient = rgb(128, 111, 99), ColorShift_Top = rgb(44, 23, 6),
-            ColorShift_Bottom = BLACK, EnvironmentDiffuseScale = 0.55, EnvironmentSpecularScale = 0.72, ShadowSoftness = 0.38},
-        atmosphere = {Density = 0.28, Offset = 0.1, Color = rgb(255, 220, 177), Decay = rgb(190, 136, 96), Glare = 0.24, Haze = 1.15},
-        grade = {Brightness = 0.005, Contrast = 0.11, Saturation = 0.035, TintColor = rgb(255, 243, 228)},
-        bloom = {Intensity = 0.17, Size = 24, Threshold = 1.35}, rays = 0.048,
-        sky = {SunAngularSize = 12, MoonAngularSize = 9, StarCount = 1200, CelestialBodiesShown = true},
-        clouds = {Cover = 0.26, Density = 0.42, Color = rgb(250, 224, 193)},
+        light = {ClockTime = 17.15, GeographicLatitude = 25, Brightness = 2.7, ExposureCompensation = 0.03,
+            Ambient = rgb(57, 53, 66), OutdoorAmbient = rgb(112, 102, 98), ColorShift_Top = rgb(66, 35, 12),
+            ColorShift_Bottom = BLACK, EnvironmentDiffuseScale = 0.70, EnvironmentSpecularScale = 0.85, ShadowSoftness = 0.33},
+        atmosphere = {Density = 0.235, Offset = 0.28, Color = rgb(255, 232, 204), Decay = rgb(211, 173, 137), Glare = 0.12, Haze = 0.75},
+        grade = {Brightness = 0, Contrast = 0.12, Saturation = 0.025, TintColor = rgb(255, 247, 237)},
+        bloom = {Intensity = 0.13, Size = 22, Threshold = 1.55}, rays = 0.035,
+        sky = {SunAngularSize = 8, MoonAngularSize = 8, StarCount = 0, CelestialBodiesShown = true},
+        clouds = {Cover = 0.18, Density = 0.32, Color = rgb(255, 234, 205)},
     },
     Moonlight = {
         subtitle = "Silver blue · quiet contrast", accent = rgb(153, 186, 233), code = "ML",
-        light = {ClockTime = 0.5, GeographicLatitude = 26, Brightness = 0.9, ExposureCompensation = -0.27,
-            Ambient = rgb(17, 23, 37), OutdoorAmbient = rgb(46, 59, 83), ColorShift_Top = rgb(5, 9, 21),
-            ColorShift_Bottom = BLACK, EnvironmentDiffuseScale = 0.24, EnvironmentSpecularScale = 0.48, ShadowSoftness = 0.56},
-        atmosphere = {Density = 0.27, Offset = 0.15, Color = rgb(157, 180, 213), Decay = rgb(49, 65, 99), Glare = 0.03, Haze = 0.9},
-        grade = {Brightness = -0.01, Contrast = 0.13, Saturation = -0.09, TintColor = rgb(218, 231, 255)},
-        bloom = {Intensity = 0.12, Size = 20, Threshold = 1.55}, rays = 0.006,
-        sky = {SunAngularSize = 10, MoonAngularSize = 13, StarCount = 2400, CelestialBodiesShown = true},
-        clouds = {Cover = 0.13, Density = 0.25, Color = rgb(112, 131, 164)},
+        light = {ClockTime = 0.3, GeographicLatitude = 26, Brightness = 1.55, ExposureCompensation = 0.02,
+            Ambient = rgb(25, 29, 42), OutdoorAmbient = rgb(64, 72, 92), ColorShift_Top = rgb(7, 12, 24),
+            ColorShift_Bottom = BLACK, EnvironmentDiffuseScale = 0.30, EnvironmentSpecularScale = 0.65, ShadowSoftness = 0.48},
+        atmosphere = {Density = 0.18, Offset = 0.22, Color = rgb(164, 182, 211), Decay = rgb(66, 79, 111), Glare = 0, Haze = 0.45},
+        grade = {Brightness = 0, Contrast = 0.10, Saturation = -0.09, TintColor = rgb(237, 243, 255)},
+        bloom = {Intensity = 0.13, Size = 22, Threshold = 1.65}, rays = 0,
+        sky = {SunAngularSize = 0, MoonAngularSize = 10, StarCount = 1600, CelestialBodiesShown = true},
+        clouds = {Cover = 0.12, Density = 0.20, Color = rgb(144, 154, 177)},
     },
     ["Cinematic Realism"] = {
         subtitle = "Neutral daylight · material depth", accent = rgb(213, 222, 220), code = "CR",
-        light = {ClockTime = 14.1, GeographicLatitude = 28, Brightness = 2.35, ExposureCompensation = -0.08,
-            Ambient = rgb(66, 69, 76), OutdoorAmbient = rgb(121, 126, 136), ColorShift_Top = rgb(7, 5, 2),
-            ColorShift_Bottom = BLACK, EnvironmentDiffuseScale = 0.67, EnvironmentSpecularScale = 0.85, ShadowSoftness = 0.32},
-        atmosphere = {Density = 0.22, Offset = 0.1, Color = rgb(212, 226, 241), Decay = rgb(157, 177, 202), Glare = 0.08, Haze = 0.65},
-        grade = {Brightness = 0, Contrast = 0.10, Saturation = -0.035, TintColor = rgb(255, 253, 249)},
-        bloom = {Intensity = 0.10, Size = 20, Threshold = 1.75}, rays = 0.018, dof = true,
-        sky = {SunAngularSize = 11, MoonAngularSize = 10, StarCount = 1000, CelestialBodiesShown = true},
-        clouds = {Cover = 0.37, Density = 0.49, Color = rgb(246, 248, 251)},
+        light = {ClockTime = 14.35, GeographicLatitude = 24, Brightness = 2.6, ExposureCompensation = 0.02,
+            Ambient = rgb(61, 64, 72), OutdoorAmbient = rgb(119, 125, 135), ColorShift_Top = rgb(8, 6, 2),
+            ColorShift_Bottom = BLACK, EnvironmentDiffuseScale = 0.78, EnvironmentSpecularScale = 0.92, ShadowSoftness = 0.28},
+        atmosphere = {Density = 0.185, Offset = 0.25, Color = rgb(221, 231, 241), Decay = rgb(177, 193, 211), Glare = 0.04, Haze = 0.35},
+        grade = {Brightness = 0, Contrast = 0.13, Saturation = -0.035, TintColor = rgb(255, 254, 251)},
+        bloom = {Intensity = 0.08, Size = 18, Threshold = 1.9}, rays = 0.018,
+        sky = {SunAngularSize = 7, MoonAngularSize = 8, StarCount = 0, CelestialBodiesShown = true},
+        clouds = {Cover = 0.28, Density = 0.38, Color = rgb(250, 251, 253)},
     },
     ["Aurora Borealis"] = {
         subtitle = "Arctic night · shifting light", accent = rgb(113, 224, 198), code = "AB",
-        light = {ClockTime = 1.5, GeographicLatitude = 48, Brightness = 0.85, ExposureCompensation = -0.17,
-            Ambient = rgb(17, 29, 40), OutdoorAmbient = rgb(43, 67, 87), ColorShift_Top = rgb(2, 12, 17),
-            ColorShift_Bottom = BLACK, EnvironmentDiffuseScale = 0.30, EnvironmentSpecularScale = 0.54, ShadowSoftness = 0.65},
-        atmosphere = {Density = 0.20, Offset = 0.2, Color = rgb(162, 206, 220), Decay = rgb(47, 72, 110), Glare = 0.02, Haze = 0.7},
-        grade = {Brightness = 0, Contrast = 0.12, Saturation = -0.025, TintColor = rgb(218, 244, 255)},
+        light = {ClockTime = 1.2, GeographicLatitude = 48, Brightness = 1.3, ExposureCompensation = 0.04,
+            Ambient = rgb(25, 33, 43), OutdoorAmbient = rgb(62, 81, 100), ColorShift_Top = rgb(3, 13, 18),
+            ColorShift_Bottom = BLACK, EnvironmentDiffuseScale = 0.34, EnvironmentSpecularScale = 0.64, ShadowSoftness = 0.60},
+        atmosphere = {Density = 0.16, Offset = 0.27, Color = rgb(167, 199, 219), Decay = rgb(62, 82, 112), Glare = 0, Haze = 0.35},
+        grade = {Brightness = 0, Contrast = 0.10, Saturation = -0.025, TintColor = rgb(233, 248, 255)},
         bloom = {Intensity = 0.19, Size = 26, Threshold = 1.3}, rays = 0,
         sky = {SunAngularSize = 8, MoonAngularSize = 10, StarCount = 2800, CelestialBodiesShown = true},
         clouds = {Cover = 0.08, Density = 0.18, Color = rgb(113, 145, 170)}, aurora = true,
     },
     Overcast = {
         subtitle = "Soft shadows · storm light", accent = rgb(159, 178, 196), code = "OC",
-        light = {ClockTime = 13.1, GeographicLatitude = 35, Brightness = 1.05, ExposureCompensation = -0.06,
-            Ambient = rgb(91, 97, 106), OutdoorAmbient = rgb(139, 145, 154), ColorShift_Top = BLACK,
-            ColorShift_Bottom = BLACK, EnvironmentDiffuseScale = 0.45, EnvironmentSpecularScale = 0.40, ShadowSoftness = 1},
-        atmosphere = {Density = 0.36, Offset = 0.08, Color = rgb(190, 202, 216), Decay = rgb(139, 153, 174), Glare = 0, Haze = 2.3},
-        grade = {Brightness = 0, Contrast = 0.04, Saturation = -0.16, TintColor = rgb(238, 245, 255)},
-        bloom = {Intensity = 0.055, Size = 16, Threshold = 1.8}, rays = 0,
+        light = {ClockTime = 12.8, GeographicLatitude = 35, Brightness = 1.35, ExposureCompensation = 0.07,
+            Ambient = rgb(83, 85, 90), OutdoorAmbient = rgb(145, 147, 150), ColorShift_Top = BLACK,
+            ColorShift_Bottom = BLACK, EnvironmentDiffuseScale = 0.72, EnvironmentSpecularScale = 0.56, ShadowSoftness = 1},
+        atmosphere = {Density = 0.255, Offset = 0.25, Color = rgb(207, 210, 215), Decay = rgb(162, 166, 173), Glare = 0, Haze = 1.05},
+        grade = {Brightness = 0, Contrast = 0.105, Saturation = -0.13, TintColor = rgb(250, 252, 255)},
+        bloom = {Intensity = 0.04, Size = 16, Threshold = 1.9}, rays = 0,
         sky = {SunAngularSize = 0, MoonAngularSize = 0, StarCount = 0, CelestialBodiesShown = false},
-        clouds = {Cover = 1, Density = 0.94, Color = rgb(185, 194, 207)},
+        clouds = {Cover = 1, Density = 0.90, Color = rgb(202, 204, 210)},
     },
     ["Volumetric Fog"] = {
         subtitle = "Layered distance · soft haze", accent = rgb(168, 194, 194), code = "VF",
-        light = {ClockTime = 8.1, GeographicLatitude = 32, Brightness = 1.5, ExposureCompensation = -0.10,
-            Ambient = rgb(83, 93, 101), OutdoorAmbient = rgb(128, 140, 148), ColorShift_Top = rgb(12, 9, 3),
-            ColorShift_Bottom = BLACK, EnvironmentDiffuseScale = 0.38, EnvironmentSpecularScale = 0.38, ShadowSoftness = 0.88},
-        atmosphere = {Density = 0.48, Offset = -0.04, Color = rgb(209, 220, 225), Decay = rgb(149, 172, 186), Glare = 0.14, Haze = 3.0},
-        grade = {Brightness = 0.005, Contrast = 0.055, Saturation = -0.12, TintColor = rgb(242, 249, 255)},
-        bloom = {Intensity = 0.12, Size = 26, Threshold = 1.55}, rays = 0.044,
+        light = {ClockTime = 8.2, GeographicLatitude = 28, Brightness = 1.85, ExposureCompensation = 0.02,
+            Ambient = rgb(83, 86, 92), OutdoorAmbient = rgb(137, 140, 144), ColorShift_Top = rgb(16, 12, 5),
+            ColorShift_Bottom = BLACK, EnvironmentDiffuseScale = 0.55, EnvironmentSpecularScale = 0.52, ShadowSoftness = 0.82},
+        atmosphere = {Density = 0.405, Offset = 0.08, Color = rgb(224, 226, 228), Decay = rgb(185, 189, 194), Glare = 0.10, Haze = 2.45},
+        grade = {Brightness = 0, Contrast = 0.08, Saturation = -0.10, TintColor = rgb(255, 253, 248)},
+        bloom = {Intensity = 0.09, Size = 24, Threshold = 1.65}, rays = 0.035,
         sky = {SunAngularSize = 8, MoonAngularSize = 0, StarCount = 0, CelestialBodiesShown = true},
-        clouds = {Cover = 0.85, Density = 0.68, Color = rgb(208, 218, 225)},
+        clouds = {Cover = 0.84, Density = 0.62, Color = rgb(221, 223, 226)},
     },
 }
 
@@ -374,41 +372,64 @@ function LightingController:Restore()
     end
 end
 
--- SkyboxManager: one six-face sky, original references retained; no texture cross-fade claim.
-local BUILTIN_FACES = {
-    SkyboxBk = "rbxasset://textures/sky/sky512_bk.tex", SkyboxDn = "rbxasset://textures/sky/sky512_dn.tex",
-    SkyboxFt = "rbxasset://textures/sky/sky512_ft.tex", SkyboxLf = "rbxasset://textures/sky/sky512_lf.tex",
-    SkyboxRt = "rbxasset://textures/sky/sky512_rt.tex", SkyboxUp = "rbxasset://textures/sky/sky512_up.tex",
+-- SkyboxManager: six independent image cubes, lazy preload and lossless restoration.
+-- Audited 2026-10-18: economy.roblox.com/v2/assets/<id>/details reports Image (type 1),
+-- thumbnails.roblox.com/v1/assets reports Completed for every face. Thumbnails were inspected.
+-- Those checks do NOT guarantee permission in every experience; PreloadAsync below is the gate.
+-- Face order: Back, Down, Front, Left, Right, Up. Map by the image's named face, not list position.
+-- Aurora uses a night cube plus native ribbons; Fog uses a hazy sea-sky cube plus Atmosphere.
+local FACE_KEYS = {"SkyboxBk", "SkyboxDn", "SkyboxFt", "SkyboxLf", "SkyboxRt", "SkyboxUp"}
+local SKY_IMAGES = {
+    ["Golden Hour"] = {323494035, 323494368, 323494130, 323494252, 323494067, 323493360},
+    Moonlight = {48020371, 48020144, 48020234, 48020211, 48020254, 48020383},
+    ["Cinematic Realism"] = {153695320, 153695352, 153695383, 153695414, 153695452, 153695471},
+    ["Aurora Borealis"] = {12064107, 12064152, 12064121, 12063984, 12064115, 12064131},
+    Overcast = {4498828382, 4498828812, 4498829917, 4498830417, 4498830911, 4498831746},
+    ["Volumetric Fog"] = {153767200, 153767216, 153767231, 153767241, 153767266, 153767288},
 }
 local SkyboxManager = {}
 SkyboxManager.__index = SkyboxManager
 function SkyboxManager.new(scope)
-    return setmetatable({scope = scope, originals = {}, foreignClouds = {}, assetState = "loading",
+    return setmetatable({scope = scope, originals = {}, foreignClouds = {}, cache = {}, assetState = "idle",
         sky = nil, clouds = nil, captured = false}, SkyboxManager)
 end
-function SkyboxManager:Verify(callback)
+function SkyboxManager:Prepare(name)
+    self.requested = name
+    local existing = self.cache[name]
+    if existing then self.assetState = existing.state; return end
+    local entry = {state = "loading", faces = {}, assets = {}}
+    for index, id in ipairs(SKY_IMAGES[name]) do
+        local uri = "rbxassetid://" .. tostring(id)
+        entry.faces[FACE_KEYS[index]] = uri
+        table.insert(entry.assets, uri)
+    end
+    self.cache[name] = entry
+    self.assetState = "loading"
     local settled = false
     local function finish(state)
         if settled or self.scope.dead then return end
-        settled = true
-        self.assetState = state
-        callback(state)
+        settled, entry.state = true, state
+        if self.requested == name then self.assetState = state end
+        if self.onResolved then self.onResolved(name, state) end
     end
     self.scope:Delay(8, function() finish("unavailable") end)
-    -- A slow/failed preload never blocks the GUI or a preset transition.
-    local thread = task.defer(function()
-        local status = {}
-        local assets = {}
-        for _, id in pairs(BUILTIN_FACES) do table.insert(assets, id) end
+    local thread
+    thread = task.defer(function()
+        local statuses = {}
         local ok = pcall(function()
-            ContentProvider:PreloadAsync(assets, function(id, state) status[id] = state end)
+            ContentProvider:PreloadAsync(entry.assets, function(id, status)
+                local key = tostring(id):match("id=(%d+)") or tostring(id):match("(%d+)$") or tostring(id)
+                statuses[key] = status
+            end)
         end)
-        for _, id in ipairs(assets) do
-            if status[id] ~= Enum.AssetFetchStatus.Success then ok = false; break end
+        for _, id in ipairs(entry.assets) do
+            local state = statuses[id:match("(%d+)$")]
+            if not state then pcall(function() state = ContentProvider:GetAssetFetchStatus(id) end) end
+            if state ~= Enum.AssetFetchStatus.Success then ok = false; break end
         end
+        self.scope.items[thread] = nil
         finish(ok and "ready" or "unavailable")
     end)
-    -- Guarded by scope + settled; an engine preload may be non-cancellable.
     self.scope:Add(thread, function(t) pcall(task.cancel, t) end)
 end
 function SkyboxManager:Capture()
@@ -424,27 +445,39 @@ function SkyboxManager:Capture()
         end
     end
 end
-function SkyboxManager:OriginalSky()
+function SkyboxManager:RestoreSky()
     if self.sky then self.sky:Destroy(); self.sky = nil end
-    if self.clouds then self.clouds:Destroy(); self.clouds = nil end
     for sky, parent in pairs(self.originals) do
         pcall(function() if sky.Parent == nil then sky.Parent = parent end end)
     end
+end
+function SkyboxManager:OriginalSky()
+    self:RestoreSky()
+    if self.clouds then self.clouds:Destroy(); self.clouds = nil end
     for clouds, enabled in pairs(self.foreignClouds) do
         pcall(function() if clouds.Enabled == false then clouds.Enabled = enabled end end)
     end
 end
 function SkyboxManager:Apply(name, preset, profile, enabled)
     self:Capture()
-    if not enabled or self.assetState ~= "ready" then self:OriginalSky(); return end
-    for sky, parent in pairs(self.originals) do
-        pcall(function() if sky.Parent == parent then sky.Parent = nil end end)
+    if not enabled then self:OriginalSky(); return end
+    local entry = self.cache[name]
+    if entry and entry.state == "ready" then
+        for sky, parent in pairs(self.originals) do
+            pcall(function() if sky.Parent == parent then sky.Parent = nil end end)
+        end
+        if not self.sky then self.sky = owned("Sky", "Sky", nil) end
+        self.sky.Name = "ShadersX_Sky_" .. name:gsub(" ", "")
+        set(self.sky, entry.faces)
+        set(self.sky, preset.sky)
+        -- These panoramas already contain their moon/sun. Avoid a second visible disc.
+        self.sky.SunAngularSize, self.sky.MoonAngularSize = 0, 0
+        self.sky.Parent = Lighting
+    else
+        self:RestoreSky()
     end
-    if not self.sky then self.sky = owned("Sky", "Sky", nil, BUILTIN_FACES) end
-    self.sky.Name = "ShadersX_Sky_" .. name:gsub(" ", "")
-    set(self.sky, preset.sky)
-    -- The exact source cube is shared; each preset owns its celestial/atmospheric composition.
-    self.sky.Parent = Lighting
+    -- Native clouds are independent of texture delivery: failed assets must not leave
+    -- Overcast as a clear blue sky with a thick blue fog filter.
     for clouds in pairs(self.foreignClouds) do pcall(function() clouds.Enabled = false end) end
     local terrain = Workspace:FindFirstChildOfClass("Terrain")
     if terrain and profile.clouds then
@@ -596,6 +629,7 @@ function ShaderManager:Activate(name, silent)
         self.light:Capture()
         self.sky:Capture()
         self.active, self.phase = name, "Applying"
+        if self.customSky then self.sky:Prepare(name) end
         self:Emit()
         self.aurora:FadeOut(0.24)
         -- A small exposure dip coordinates the discrete sky swap; texture URLs are never tweened.
@@ -665,16 +699,17 @@ function ShaderManager:SetSkybox(enabled)
     return true
 end
 function ShaderManager:Start()
-    self.sky:Verify(function(state)
-        if self.dead then return end
-        self:Emit()
-        if self.active and self.customSky then self:Activate(self.active, true) end
-        if state ~= "ready" then self:Notify("Skybox fallback", "Sky assets unavailable. Keeping the game sky.") end
-    end)
+    self.sky.onResolved = function(name, state)
+        if self.dead or self.active ~= name or not self.customSky then return end
+        -- Reuse the cancellable transition so a late texture never swaps into a different preset.
+        self:Activate(name, true)
+        if state ~= "ready" then self:Notify("Skybox unavailable", "Native atmosphere remains active.") end
+    end
 end
 function ShaderManager:Destroy()
     if self.dead then return end
     self.dead = true
+    self.sky.onResolved = nil
     self.transitions:Destroy()
     self.aurora:Destroy()
     self.sky:Restore()
@@ -685,11 +720,51 @@ function ShaderManager:Destroy()
     if self.onDestroy then self.onDestroy() end
 end
 
+-- UI fades animate transparency directly. A dark UIGradient on CanvasGroup tints ALL
+-- descendants; ordinary Frames keep text independent and avoid mobile render-texture caps.
+local VisibilityAnimator = {}
+VisibilityAnimator.__index = VisibilityAnimator
+function VisibilityAnimator.new(root, scope)
+    local self = setmetatable({root = root, entries = {}, proxy = scope:Add(make("NumberValue", {Value = 0}))}, VisibilityAnimator)
+    local nodes = root:GetDescendants()
+    table.insert(nodes, root)
+    for _, node in ipairs(nodes) do
+        local keys = {}
+        if node:IsA("GuiObject") then table.insert(keys, "BackgroundTransparency") end
+        if node:IsA("TextLabel") or node:IsA("TextButton") or node:IsA("TextBox") then
+            table.insert(keys, "TextTransparency"); table.insert(keys, "TextStrokeTransparency")
+        elseif node:IsA("ImageLabel") or node:IsA("ImageButton") then table.insert(keys, "ImageTransparency") end
+        if node:IsA("UIStroke") then table.insert(keys, "Transparency") end
+        if node:IsA("ScrollingFrame") then table.insert(keys, "ScrollBarImageTransparency") end
+        if #keys > 0 then self.entries[node] = snapshot(node, keys) end
+    end
+    scope:Connect(self.proxy:GetPropertyChangedSignal("Value"), function() self:Render() end)
+    return self
+end
+function VisibilityAnimator:Render()
+    local alpha = self.proxy.Value
+    self.root:SetAttribute("VisibilityAlpha", alpha)
+    for node, properties in pairs(self.entries) do
+        for property, base in pairs(properties) do node[property] = base + (1 - base) * alpha end
+    end
+end
+function VisibilityAnimator:Set(alpha)
+    self.proxy.Value = alpha
+    self:Render()
+end
+function VisibilityAnimator:Base(node, property, value)
+    if self.entries[node] then self.entries[node][property] = value end
+    node[property] = value + (1 - value) * self.proxy.Value
+end
+function VisibilityAnimator:To(transitions, alpha, duration, callback)
+    transitions:To(self.proxy, {Value = alpha}, duration, callback)
+end
+
 -- UIController: compact scrollable panel; all visual controls share the same event-driven system.
 local UIController = {}
 UIController.__index = UIController
-local Palette = {base = rgb(13, 13, 19), raised = rgb(22, 22, 31), border = rgb(67, 61, 86),
-    text = rgb(239, 237, 248), muted = rgb(153, 150, 171), accent = rgb(171, 132, 244), cool = rgb(143, 189, 230)}
+local Palette = {base = rgb(20, 21, 29), raised = rgb(36, 37, 49), border = rgb(89, 86, 112),
+    text = rgb(247, 247, 255), muted = rgb(186, 187, 207), accent = rgb(190, 157, 255), cool = rgb(156, 211, 244)}
 local function corner(parent, radius)
     return make("UICorner", {CornerRadius = UDim.new(0, radius)}, parent)
 end
@@ -703,12 +778,13 @@ end
 local function label(parent, name, text, size, color, position, dimensions, weight)
     return make("TextLabel", {Name = name, BackgroundTransparency = 1, BorderSizePixel = 0,
         Text = text, Font = weight or Enum.Font.Gotham, TextSize = size, TextColor3 = color or Palette.text,
+        TextTransparency = 0, TextStrokeTransparency = 1,
         TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Center,
         Position = position, Size = dimensions, ZIndex = 3}, parent)
 end
 local function button(parent, name, text, position, dimensions)
     local b = make("TextButton", {Name = name, Text = text, Font = Enum.Font.GothamMedium,
-        TextSize = 13, TextColor3 = Palette.text, BorderSizePixel = 0,
+        TextSize = 14, TextColor3 = Palette.text, TextTransparency = 0, TextStrokeTransparency = 1, BorderSizePixel = 0,
         BackgroundColor3 = Palette.raised, AutoButtonColor = false,
         Position = position, Size = dimensions, ZIndex = 3}, parent)
     corner(b, 10)
@@ -716,20 +792,28 @@ local function button(parent, name, text, position, dimensions)
 end
 function UIController:Bind(buttonObject, callback)
     local scale = make("UIScale", {Scale = 1}, buttonObject)
+    local function ready()
+        return not self.dead and not self.closing and not self.minimized
+            and (not self.windowFade or self.windowFade.proxy.Value == 0)
+    end
     self.scope:Connect(buttonObject.InputBegan, function(input)
+        if not ready() then return end
         if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
             self.tweens:To(scale, {Scale = 0.976}, 0.10)
         end
     end)
     self.scope:Connect(buttonObject.InputEnded, function(input)
+        if not ready() then return end
         if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
             self.tweens:To(scale, {Scale = 1}, 0.2)
         end
     end)
     self.scope:Connect(buttonObject.MouseEnter, function()
+        if not ready() then return end
         self.tweens:To(buttonObject, {BackgroundTransparency = 0.12}, 0.18)
     end)
     self.scope:Connect(buttonObject.MouseLeave, function()
+        if not ready() then return end
         self.tweens:To(buttonObject, {BackgroundTransparency = 0}, 0.18)
         self.tweens:To(scale, {Scale = 1}, 0.2)
     end)
@@ -789,10 +873,10 @@ function UIController.new(manager)
     local safe = make("Frame", {Name = "SafeArea", BackgroundTransparency = 1,
         Size = UDim2.fromScale(1, 1), BorderSizePixel = 0}, screen)
     self.safe = safe
-    -- CanvasGroups are restricted to these small panels, never a full-screen texture.
-    local window = make("CanvasGroup", {Name = "Window", Size = UDim2.fromOffset(360, 554),
-        Position = UDim2.fromOffset(24, 36), BackgroundColor3 = Palette.base,
-        BorderSizePixel = 0, GroupTransparency = 1, ClipsDescendants = true}, safe)
+    -- Opaque graphite backing and independent text; no group tint or render-to-texture dependency.
+    local window = make("Frame", {Name = "Window", Size = UDim2.fromOffset(384, 552),
+        Position = UDim2.fromOffset(24, 36), BackgroundColor3 = WHITE,
+        BorderSizePixel = 0, ClipsDescendants = true}, safe)
     self.window = window
     self.windowScale = make("UIScale", {Scale = 0.97}, window)
     corner(window, 18)
@@ -801,8 +885,8 @@ function UIController.new(manager)
         ColorSequenceKeypoint.new(0, rgb(65, 59, 81)), ColorSequenceKeypoint.new(0.45, Palette.accent),
         ColorSequenceKeypoint.new(0.72, Palette.cool), ColorSequenceKeypoint.new(1, rgb(57, 52, 73)),
     }, 35)
-    gradient(window, {ColorSequenceKeypoint.new(0, rgb(31, 26, 43)), ColorSequenceKeypoint.new(0.3, Palette.base),
-        ColorSequenceKeypoint.new(1, rgb(18, 18, 26))}, 105)
+    gradient(window, {ColorSequenceKeypoint.new(0, rgb(37, 34, 49)), ColorSequenceKeypoint.new(0.3, Palette.base),
+        ColorSequenceKeypoint.new(1, rgb(22, 24, 33))}, 105)
     local crest = make("Frame", {Name = "EdgeLight", BorderSizePixel = 0, BackgroundColor3 = WHITE,
         BackgroundTransparency = 0.25, Position = UDim2.fromOffset(24, 0), Size = UDim2.new(1, -48, 0, 1)}, window)
     local crestGradient = gradient(crest, {ColorSequenceKeypoint.new(0, Palette.accent),
@@ -814,28 +898,36 @@ function UIController.new(manager)
     local emblem = label(header, "Mark", "SX", 18, Palette.text, UDim2.fromOffset(18, 17), UDim2.fromOffset(34, 28), Enum.Font.GothamBold)
     gradient(emblem, {ColorSequenceKeypoint.new(0, WHITE), ColorSequenceKeypoint.new(1, Palette.accent)}, 60)
     label(header, "Title", "Shaders X", 19, Palette.text, UDim2.fromOffset(62, 14), UDim2.fromOffset(160, 26), Enum.Font.GothamBold)
-    label(header, "Subtitle", "CINEMATIC ENVIRONMENTS", 9, Palette.muted, UDim2.fromOffset(63, 40), UDim2.fromOffset(180, 14), Enum.Font.GothamMedium)
-    local minimize = button(window, "Minimize", "−", UDim2.new(1, -96, 0, 12), UDim2.fromOffset(40, 40))
-    local close = button(window, "Close", "×", UDim2.new(1, -50, 0, 12), UDim2.fromOffset(40, 40))
+    label(header, "Subtitle", "LIGHT / ATMOSPHERE", 10, Palette.muted, UDim2.fromOffset(63, 40), UDim2.fromOffset(180, 14), Enum.Font.GothamMedium)
+    local minimize = button(window, "Minimize", "−", UDim2.new(1, -104, 0, 12), UDim2.fromOffset(44, 44))
+    local close = button(window, "Close", "×", UDim2.new(1, -54, 0, 12), UDim2.fromOffset(44, 44))
     minimize.TextSize, close.TextSize = 22, 22
     stroke(minimize, Palette.border, 0.55); stroke(close, Palette.border, 0.55)
     self:Bind(minimize, function() self:Minimize() end)
     self:Bind(close, function() self:Close() end)
     self:Drag(header, window)
 
-    local status = make("Frame", {Name = "ActivePreset", BorderSizePixel = 0, BackgroundColor3 = rgb(23, 22, 33),
+    local status = make("Frame", {Name = "ActivePreset", BorderSizePixel = 0, BackgroundColor3 = rgb(33, 33, 46),
         Position = UDim2.fromOffset(16, 72), Size = UDim2.new(1, -32, 0, 46)}, window)
     corner(status, 11)
     stroke(status, Palette.border, 0.55)
     self.dot = make("Frame", {Name = "StatusDot", BackgroundColor3 = Palette.muted, BorderSizePixel = 0,
         Size = UDim2.fromOffset(6, 6), Position = UDim2.fromOffset(14, 20)}, status)
     corner(self.dot, 6)
-    self.activeLabel = label(status, "ActiveName", "Original environment", 13, Palette.text,
+    self.activeLabel = label(status, "ActiveName", "Original environment", 14, Palette.text,
         UDim2.fromOffset(31, 6), UDim2.new(1, -44, 0, 20), Enum.Font.GothamMedium)
-    self.phaseLabel = label(status, "Phase", "Select an environment below", 10, Palette.muted,
+    self.phaseLabel = label(status, "Phase", "Select an environment below", 11, Palette.muted,
         UDim2.fromOffset(31, 26), UDim2.new(1, -44, 0, 14))
+    self.tabs = {}
+    for index, name in ipairs({"Environments", "Settings"}) do
+        local tab = button(window, name .. "Tab", name,
+            UDim2.new((index - 1) * 0.5, index == 1 and 16 or 4, 0, 128), UDim2.new(0.5, -20, 0, 40))
+        local line = stroke(tab, Palette.border, 0.6)
+        self.tabs[name] = {button = tab, stroke = line}
+        self:Bind(tab, function() self:SelectView(name) end)
+    end
     local scroll = make("ScrollingFrame", {Name = "PresetsAndSettings", BackgroundTransparency = 1,
-        BorderSizePixel = 0, Position = UDim2.fromOffset(16, 129), Size = UDim2.new(1, -32, 1, -197),
+        BorderSizePixel = 0, Position = UDim2.fromOffset(16, 180), Size = UDim2.new(1, -32, 1, -248),
         CanvasSize = UDim2.fromOffset(0, 0), AutomaticCanvasSize = Enum.AutomaticSize.Y,
         ScrollBarThickness = 3, ScrollBarImageColor3 = Palette.accent, ScrollBarImageTransparency = 0.35,
         ScrollingDirection = Enum.ScrollingDirection.Y, ElasticBehavior = Enum.ElasticBehavior.WhenScrollable,
@@ -844,26 +936,32 @@ function UIController.new(manager)
     make("UIListLayout", {SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 8)}, scroll)
     make("UIPadding", {PaddingLeft = UDim.new(0, 2), PaddingRight = UDim.new(0, 6),
         PaddingTop = UDim.new(0, 2), PaddingBottom = UDim.new(0, 4)}, scroll)
+    local grid = make("Frame", {Name = "Environments", BackgroundTransparency = 1,
+        Size = UDim2.new(1, 0, 0, 306), LayoutOrder = 1}, scroll)
+    self.presetGrid = grid
     for index, name in ipairs(PRESET_ORDER) do
         local preset = Presets[name]
-        local card = button(scroll, name, "", UDim2.fromOffset(0, 0), UDim2.new(1, 0, 0, 61))
+        local column, row = (index - 1) % 2, math.floor((index - 1) / 2)
+        local card = button(grid, name, "", UDim2.new(column * 0.5, column == 0 and 0 or 4, 0, row * 104),
+            UDim2.new(0.5, -4, 0, 98))
         card.LayoutOrder = index
-        card.BackgroundColor3 = rgb(22, 21, 30)
+        card.BackgroundColor3 = WHITE
         local edge = stroke(card, Palette.border, 0.57)
-        local fill = gradient(card, {ColorSequenceKeypoint.new(0, rgb(47, 38, 62)), ColorSequenceKeypoint.new(1, rgb(20, 21, 30))}, 20)
+        local fill = gradient(card, {ColorSequenceKeypoint.new(0, rgb(46, 43, 61)), ColorSequenceKeypoint.new(1, rgb(29, 32, 44))}, 20)
         local badge = make("Frame", {Name = "Monogram", BackgroundColor3 = preset.accent, BackgroundTransparency = 0.9,
-            BorderSizePixel = 0, Position = UDim2.fromOffset(10, 12), Size = UDim2.fromOffset(36, 36), ZIndex = 4}, card)
+            BorderSizePixel = 0, Position = UDim2.fromOffset(12, 10), Size = UDim2.fromOffset(29, 24), ZIndex = 4}, card)
         corner(badge, 9)
         local glyph = label(badge, "Symbol", preset.code, 11, preset.accent,
             UDim2.fromOffset(0, 0), UDim2.fromScale(1, 1), Enum.Font.GothamBold)
         glyph.TextXAlignment = Enum.TextXAlignment.Center
-        local title = label(card, "Name", name, 13, Palette.text,
-            UDim2.fromOffset(55, 11), UDim2.new(1, -111, 0, 20), Enum.Font.GothamMedium)
-        title.TextTruncate = Enum.TextTruncate.AtEnd
-        local sub = label(card, "Description", preset.subtitle, 9, Palette.muted,
-            UDim2.fromOffset(55, 33), UDim2.new(1, -62, 0, 17))
+        local title = label(card, "Name", name, 14, Palette.text,
+            UDim2.fromOffset(12, 37), UDim2.new(1, -24, 0, 34), Enum.Font.GothamMedium)
+        title.TextWrapped = true
+        title.TextYAlignment = Enum.TextYAlignment.Top
+        local sub = label(card, "Description", preset.subtitle, 11, Palette.muted,
+            UDim2.fromOffset(12, 76), UDim2.new(1, -24, 0, 15))
         sub.TextTruncate = Enum.TextTruncate.AtEnd
-        local state = label(card, "State", "OFF", 9, Palette.muted,
+        local state = label(card, "State", "OFF", 11, Palette.muted,
             UDim2.new(1, -48, 0, 12), UDim2.fromOffset(36, 18), Enum.Font.GothamBold)
         state.TextXAlignment = Enum.TextXAlignment.Right
         self.buttons[name] = {button = card, stroke = edge, state = state, gradient = fill, badge = badge}
@@ -872,14 +970,15 @@ function UIController.new(manager)
         end)
     end
     local settings = make("Frame", {Name = "Settings", BackgroundTransparency = 1, LayoutOrder = 7,
-        Size = UDim2.new(1, 0, 0, 202)}, scroll)
-    label(settings, "Heading", "RENDER SETTINGS", 9, Palette.muted,
+        Size = UDim2.new(1, 0, 0, 236), Visible = false}, scroll)
+    self.settingsView = settings
+    label(settings, "Heading", "RENDER SETTINGS", 11, Palette.muted,
         UDim2.fromOffset(2, 9), UDim2.new(1, -4, 0, 16), Enum.Font.GothamMedium)
     local skyButton = button(settings, "CustomSkybox", "", UDim2.fromOffset(0, 32), UDim2.new(1, 0, 0, 49))
     stroke(skyButton, Palette.border, 0.65)
-    label(skyButton, "Name", "Custom skybox", 12, Palette.text,
+    label(skyButton, "Name", "Custom skybox", 14, Palette.text,
         UDim2.fromOffset(11, 6), UDim2.new(1, -80, 0, 21), Enum.Font.GothamMedium)
-    self.skyNote = label(skyButton, "Source", "Checking built-in sky…", 9, Palette.muted,
+    self.skyNote = label(skyButton, "Source", "Preset-matched panoramas", 11, Palette.muted,
         UDim2.fromOffset(11, 29), UDim2.new(1, -70, 0, 14))
     self.skySwitch = make("Frame", {Name = "Switch", BackgroundColor3 = rgb(73, 53, 107), BorderSizePixel = 0,
         Position = UDim2.new(1, -51, 0, 13), Size = UDim2.fromOffset(39, 23)}, skyButton)
@@ -888,29 +987,28 @@ function UIController.new(manager)
         Position = UDim2.fromOffset(19, 3), Size = UDim2.fromOffset(17, 17)}, self.skySwitch)
     corner(self.skyThumb, 9)
     self:Bind(skyButton, function() manager:SetSkybox(not manager.customSky) end)
-    label(settings, "QualityLabel", "Visual quality", 11, Palette.text, UDim2.fromOffset(2, 92), UDim2.fromOffset(180, 18))
+    label(settings, "QualityLabel", "Visual quality", 13, Palette.text, UDim2.fromOffset(2, 92), UDim2.fromOffset(180, 18))
     for index, name in ipairs(GraphicsProfiles.Order) do
         local column, row = (index - 1) % 2, math.floor((index - 1) / 2)
-        local item = button(settings, name, name, UDim2.new(column * 0.5, column == 0 and 0 or 4, 0, 115 + row * 43),
-            UDim2.new(0.5, -4, 0, 37))
-        item.TextSize = 11
+        local item = button(settings, name, name, UDim2.new(column * 0.5, column == 0 and 0 or 4, 0, 118 + row * 52),
+            UDim2.new(0.5, -4, 0, 44))
+        item.TextSize = 13
         local edge = stroke(item, Palette.border, 0.6)
         self.profiles[name] = {button = item, stroke = edge}
         self:Bind(item, function() manager:SetQuality(name) end)
     end
     local footer = make("Frame", {Name = "Footer", BorderSizePixel = 0, BackgroundColor3 = Palette.base,
         Position = UDim2.new(0, 0, 1, -64), Size = UDim2.new(1, 0, 0, 64)}, window)
-    local disable = button(footer, "DisableAllShaders", "Disable All Shaders", UDim2.fromOffset(16, 8), UDim2.new(1, -32, 0, 40))
+    local disable = button(footer, "DisableAllShaders", "Disable All Shaders", UDim2.fromOffset(16, 8), UDim2.new(1, -32, 0, 44))
     stroke(disable, Palette.border, 0.4)
     self:Bind(disable, function() manager:DisableAll() end)
 
     local floating = button(safe, "RestoreSX", "SX", UDim2.fromOffset(20, 28), UDim2.fromOffset(52, 52))
     floating.Visible, floating.TextSize, floating.Font = false, 17, Enum.Font.GothamBold
-    floating.BackgroundColor3 = Palette.base
+    floating.BackgroundColor3 = rgb(43, 35, 61)
     floating:FindFirstChildOfClass("UICorner").CornerRadius = UDim.new(0, 16)
     local floatEdge = stroke(floating, WHITE, 0.2, 1.25)
     gradient(floatEdge, {ColorSequenceKeypoint.new(0, Palette.accent), ColorSequenceKeypoint.new(1, Palette.cool)}, 40)
-    gradient(floating, {ColorSequenceKeypoint.new(0, rgb(54, 39, 73)), ColorSequenceKeypoint.new(1, Palette.base)}, 55)
     self.floating, self.floatEdge = floating, floatEdge
     self:Drag(floating, floating, function() self:RestoreWindow() end)
     -- Activated supports keyboard/gamepad. Mouse/touch tap is resolved by Drag to prevent restoring after a drag.
@@ -925,7 +1023,10 @@ function UIController.new(manager)
     self.scope:Connect(safe:GetPropertyChangedSignal("AbsoluteSize"), function() self:Layout() end)
     screen.Parent = playerGui
     self:Layout()
-    self.windowTweens:To(window, {GroupTransparency = 0}, 0.38)
+    self.windowFade = VisibilityAnimator.new(window, self.scope)
+    self:SelectView("Environments")
+    self.windowFade:Set(1)
+    self.windowFade:To(self.windowTweens, 0, 0.38)
     self.windowTweens:To(self.windowScale, {Scale = 1}, 0.4, nil, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
     self:Refresh()
     return self
@@ -934,11 +1035,20 @@ function UIController:Layout()
     if self.dead then return end
     local bounds = self.safe.AbsoluteSize
     if bounds.X < 100 or bounds.Y < 100 then return end
-    local width = math.min(360, bounds.X - 24)
+    local width = math.min(384, bounds.X - 24)
     -- Reserve the lower touch-control zone; the content scrolls instead of shrinking its text.
     local bottomReserve = UserInputService.TouchEnabled and 92 or 36
-    local height = math.min(582, math.max(224, bounds.Y - bottomReserve - 16), bounds.Y - 16)
+    local height = math.min(568, math.max(280, bounds.Y - bottomReserve - 16), bounds.Y - 16)
     self.window.Size = UDim2.fromOffset(width, height)
+    local compact = height < 340
+    local header = self.window:FindFirstChild("ActivePreset")
+    header.Visible = not compact
+    for _, tab in pairs(self.tabs) do
+        local p = tab.button.Position
+        tab.button.Position = UDim2.new(p.X.Scale, p.X.Offset, 0, compact and 70 or 128)
+    end
+    self.scroll.Position = UDim2.fromOffset(16, compact and 120 or 180)
+    self.scroll.Size = UDim2.new(1, -32, 1, compact and -188 or -248)
     if not self.windowMoved then
         self.window.Position = UDim2.fromOffset(math.max(12, bounds.X - width - 20), 12)
     else
@@ -955,6 +1065,18 @@ function UIController:Layout()
     end
     if self.toast then self.toast.Size = UDim2.fromOffset(math.min(326, bounds.X - 24), 76) end
 end
+function UIController:SelectView(name)
+    self.presetGrid.Visible = name == "Environments"
+    self.settingsView.Visible = name == "Settings"
+    self.scroll.CanvasPosition = Vector2.zero
+    for key, tab in pairs(self.tabs) do
+        local selected = key == name
+        tab.button.BackgroundColor3 = selected and rgb(63, 47, 89) or Palette.raised
+        tab.button.TextColor3 = selected and WHITE or Palette.muted
+        tab.stroke.Color = selected and Palette.accent or Palette.border
+        self.windowFade:Base(tab.stroke, "Transparency", selected and 0.20 or 0.65)
+    end
+end
 function UIController:Refresh()
     if self.dead then return end
     local manager = self.manager
@@ -969,30 +1091,32 @@ function UIController:Refresh()
         local selected = manager.active == name
         item.state.Text = selected and "ON" or "OFF"
         item.state.TextColor3 = selected and Presets[name].accent or Palette.muted
-        self.tweens:To(item.stroke, {Color = selected and Presets[name].accent or Palette.border,
-            Transparency = selected and 0.16 or 0.57}, 0.22)
-        self.tweens:To(item.badge, {BackgroundTransparency = selected and 0.78 or 0.9}, 0.22)
+        self.tweens:To(item.stroke, {Color = selected and Presets[name].accent or Palette.border}, 0.22)
+        self.windowFade:Base(item.stroke, "Transparency", selected and 0 or 0.42)
+        self.windowFade:Base(item.badge, "BackgroundTransparency", selected and 0.72 or 0.90)
     end
     for name, item in pairs(self.profiles) do
         local selected = manager.quality == name
         item.button.BackgroundColor3 = selected and rgb(52, 39, 76) or Palette.raised
-        self.tweens:To(item.stroke, {Color = selected and Palette.accent or Palette.border,
-            Transparency = selected and 0.18 or 0.6}, 0.2)
+        self.tweens:To(item.stroke, {Color = selected and Palette.accent or Palette.border}, 0.2)
+        self.windowFade:Base(item.stroke, "Transparency", selected and 0.1 or 0.5)
     end
     self.tweens:To(self.skySwitch, {BackgroundColor3 = manager.customSky and rgb(73, 53, 107) or rgb(42, 42, 52)}, 0.2)
     self.tweens:To(self.skyThumb, {Position = UDim2.fromOffset(manager.customSky and 19 or 3, 3),
         BackgroundColor3 = manager.customSky and Palette.accent or Palette.muted}, 0.22)
     if not manager.customSky then self.skyNote.Text = "Original game sky"
-    elseif manager.sky.assetState == "loading" then self.skyNote.Text = "Checking built-in sky…"
-    elseif manager.sky.assetState == "ready" then self.skyNote.Text = "Built-in sky · atmospheric fallback"
-    else self.skyNote.Text = "Assets unavailable · game sky" end
+    elseif not manager.active then self.skyNote.Text = "Preset-matched panoramas"
+    elseif manager.sky.assetState == "loading" then self.skyNote.Text = "Loading panoramic sky…"
+    elseif manager.sky.assetState == "ready" then self.skyNote.Text = "Panoramic sky ready"
+    else self.skyNote.Text = "Native atmosphere · game sky" end
 end
 function UIController:Minimize()
     if self.dead or self.closing or self.minimized then return end
     self.minimized = true
     self.windowTweens:Reset()
     self.windowTweens:To(self.windowScale, {Scale = 0.97}, 0.23)
-    self.windowTweens:To(self.window, {GroupTransparency = 1}, 0.23, function()
+    self.tweens:Reset()
+    self.windowFade:To(self.windowTweens, 1, 0.23, function()
         self.window.Visible = false
         self.floating.Visible = true
         self.floating.TextTransparency = 1
@@ -1007,13 +1131,13 @@ function UIController:RestoreWindow()
     self.windowTweens:Reset()
     self.floating.Visible = false
     self.window.Visible = true
-    self.windowTweens:To(self.window, {GroupTransparency = 0}, 0.3)
+    self.windowFade:To(self.windowTweens, 0, 0.3, function() self:Refresh() end)
     self.windowTweens:To(self.windowScale, {Scale = 1}, 0.34, nil, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
 end
 function UIController:CreateToast()
-    local toast = make("CanvasGroup", {Name = "Notification", BackgroundColor3 = Palette.base,
+    local toast = make("Frame", {Name = "Notification", BackgroundColor3 = WHITE,
         BorderSizePixel = 0, Position = UDim2.new(1, 30, 0, 12), Size = UDim2.fromOffset(326, 76),
-        GroupTransparency = 1, Visible = false, ZIndex = 30}, self.safe)
+        Visible = false, ZIndex = 30}, self.safe)
     corner(toast, 14)
     local edge = stroke(toast, WHITE, 0.15)
     gradient(edge, {ColorSequenceKeypoint.new(0, Palette.accent), ColorSequenceKeypoint.new(0.6, Palette.cool),
@@ -1021,13 +1145,15 @@ function UIController:CreateToast()
     gradient(toast, {ColorSequenceKeypoint.new(0, rgb(34, 27, 48)), ColorSequenceKeypoint.new(1, rgb(14, 16, 24))}, 25)
     local mark = label(toast, "Mark", "SX", 13, Palette.accent, UDim2.fromOffset(14, 22), UDim2.fromOffset(28, 28), Enum.Font.GothamBold)
     mark.TextXAlignment = Enum.TextXAlignment.Center
-    self.toastTitle = label(toast, "Title", "", 12, Palette.text, UDim2.fromOffset(54, 14), UDim2.new(1, -68, 0, 20), Enum.Font.GothamMedium)
-    self.toastMessage = label(toast, "Message", "", 10, Palette.muted, UDim2.fromOffset(54, 36), UDim2.new(1, -68, 0, 27))
+    self.toastTitle = label(toast, "Title", "", 14, Palette.text, UDim2.fromOffset(54, 14), UDim2.new(1, -68, 0, 20), Enum.Font.GothamMedium)
+    self.toastMessage = label(toast, "Message", "", 12, Palette.muted, UDim2.fromOffset(54, 36), UDim2.new(1, -68, 0, 27))
     self.toastMessage.TextWrapped = true
-    self.toastLine = make("Frame", {Name = "Lifetime", BackgroundColor3 = Palette.accent, BorderSizePixel = 0,
+    self.toastLine = make("Frame", {Name = "Lifetime", BackgroundColor3 = WHITE, BorderSizePixel = 0,
         Position = UDim2.new(0, 14, 1, -5), Size = UDim2.new(1, -28, 0, 1)}, toast)
     gradient(self.toastLine, {ColorSequenceKeypoint.new(0, Palette.accent), ColorSequenceKeypoint.new(1, Palette.cool)}, 0)
     self.toast = toast
+    self.toastFade = VisibilityAnimator.new(toast, self.scope)
+    self.toastFade:Set(1)
 end
 function UIController:Notify(title, message)
     if self.dead or self.closing then return end
@@ -1037,13 +1163,16 @@ function UIController:Notify(title, message)
     local width = math.min(326, self.safe.AbsoluteSize.X - 24)
     toast.Size = UDim2.fromOffset(width, 76)
     toast.Position = UDim2.new(1, 30, 0, 12)
-    toast.GroupTransparency, toast.Visible = 1, true
+    self.toastFade:Set(1)
+    toast.Visible = true
     self.toastLine.Size = UDim2.new(1, -28, 0, 1)
     local x = math.max(12, (self.safe.AbsoluteSize.X - width) / 2)
-    self.toastTweens:To(toast, {Position = UDim2.fromOffset(x, 12), GroupTransparency = 0}, 0.32, function()
+    self.toastFade:To(self.toastTweens, 0, 0.32)
+    self.toastTweens:To(toast, {Position = UDim2.fromOffset(x, 12)}, 0.32, function()
         self.toastTweens:To(self.toastLine, {Size = UDim2.fromOffset(0, 1)}, 3, nil, Enum.EasingStyle.Linear)
         self.toastTweens:After(3, function()
-            self.toastTweens:To(toast, {Position = UDim2.new(1, 30, 0, 12), GroupTransparency = 1}, 0.28, function()
+            self.toastFade:To(self.toastTweens, 1, 0.28)
+            self.toastTweens:To(toast, {Position = UDim2.new(1, 30, 0, 12)}, 0.28, function()
                 toast.Visible = false
             end)
         end)
@@ -1057,7 +1186,8 @@ function UIController:Close()
     self.toast.Visible = false
     -- Restoration starts immediately; the manager's final Destroy is also safe mid-transition.
     self.manager:DisableAll(false, true)
-    self.windowTweens:To(self.window, {GroupTransparency = 1}, 0.28)
+    self.tweens:Reset()
+    self.windowFade:To(self.windowTweens, 1, 0.28)
     self.windowTweens:To(self.windowScale, {Scale = 0.98}, 0.28)
     self.windowTweens:After(0.76, function() self.manager:Destroy() end)
 end
