@@ -1,5 +1,5 @@
 --[[
- Reyzn X Emotes v1.5-smooth-test | standalone universal R15 emote & animation browser
+ Reyzn X Emotes v1.6-cache-test | standalone universal R15 emote & animation browser
  Built from scratch. Inspired by standard emote catalog and Animator techniques.
  Designed for desktop + mobile. No purchase/access-control bypass.
  FE note: only animations that Roblox successfully loads on a SERVER-CREATED
@@ -51,6 +51,70 @@ local packIds, emoteIds={},{}
 local packBundleIds={}
 local catalogAnimationIds={}
 local packRequestGeneration=0
+-- Persistent animation-ID cache. Stores only catalog asset ID -> animation content ID.
+-- Optional: executors without file APIs continue using the in-memory cache.
+-- Reading and writing are protected so a damaged file never blocks startup.
+local catalogCacheFile="ReyznXEmotes_animation_ids_v1.json"
+local catalogCacheDirty=false
+local catalogCacheSaving=false
+local restoredCatalogIds=0
+local function validCacheId(n)
+    return type(n)=="number" and n>0 and n<9007199254740992 and n%1==0
+end
+do
+    if type(readfile)=="function" then
+        local ok,raw=pcall(function()
+            if type(isfile)=="function" and not isfile(catalogCacheFile) then return nil end
+            return readfile(catalogCacheFile)
+        end)
+        if ok and type(raw)=="string" and #raw<250000 then
+            local parsedOk,parsed=pcall(function() return HttpService:JSONDecode(raw) end)
+            if parsedOk and type(parsed)=="table"
+                and parsed.version==1 and type(parsed.assets)=="table" then
+                for assetKey,contentValue in pairs(parsed.assets) do
+                    local assetId=tonumber(assetKey)
+                    local contentId=tonumber(contentValue)
+                    if validCacheId(assetId) and validCacheId(contentId)
+                        and assetId~=contentId then
+                        catalogAnimationIds[assetId]=contentId
+                        restoredCatalogIds=restoredCatalogIds+1
+                    end
+                end
+            end
+        end
+    end
+end
+
+local function queueCatalogCacheSave()
+    if type(writefile)~="function" or catalogCacheSaving then return end
+    catalogCacheSaving=true
+    task.spawn(function()
+        -- Write outside the animation-loading callback, after the batch settles.
+        task.wait(0.35)
+        while catalogCacheDirty do
+            catalogCacheDirty=false
+            local assets={}
+            for assetId,contentId in pairs(catalogAnimationIds) do
+                if validCacheId(assetId) and validCacheId(contentId)
+                    and assetId~=contentId then
+                    assets[tostring(assetId)]=contentId
+                end
+            end
+            local ok,err=pcall(function()
+                writefile(catalogCacheFile,HttpService:JSONEncode({
+                    version=1,assets=assets
+                }))
+            end)
+            if not ok then
+                warn("[Reyzn X Emotes] Couldn't save animation cache: "..tostring(err))
+                break
+            end
+            if catalogCacheDirty then task.wait(0.2) end
+        end
+        catalogCacheSaving=false
+    end)
+end
+
 local favorites={}
 local selectedPack=nil
 local movementTracks={}
@@ -656,7 +720,10 @@ local function resolveCatalogAnimation(assetId)
         end)
         pcall(function() object:Destroy() end)
     end
-    if resolvedId then catalogAnimationIds[assetId]=resolvedId end
+    if resolvedId then
+        catalogAnimationIds[assetId]=resolvedId
+        catalogCacheDirty=true
+    end
     return resolvedId
 end
 
@@ -700,6 +767,7 @@ local function resolveCatalogMovementClips(pack,request)
     pack.playableClips=resolved
     pack.resolvedCount=successful
     pack.originalClipCount=total
+    if catalogCacheDirty then queueCatalogCacheSave() end
     return resolved
 end
 
@@ -1240,6 +1308,17 @@ render=function()
             end
             render()
         end)
+        settingLine("Clear saved animation ID cache",6,function()
+            table.clear(catalogAnimationIds)
+            for _,pack in ipairs(packList) do
+                pack.playableClips=nil
+            end
+            catalogCacheDirty=true
+            queueCatalogCacheSave()
+            say(type(writefile)=="function"
+                and "Saved animation IDs cleared. Reapply a pack to refresh."
+                or "Session cache cleared (file storage unavailable).")
+        end)
         return
     end
     local items=filtered()
@@ -1277,6 +1356,6 @@ render()
 if not getRig() then
     say("R15 + server-created Animator required.")
 else
-    say("Ready • FE depends on Roblox/game permissions")
+    say("Ready • FE depends on game | "..restoredCatalogIds.." saved IDs")
 end
 -- Catalog browsing is on-demand to avoid infinite loading or startup stalls.
