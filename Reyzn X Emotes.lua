@@ -587,7 +587,7 @@ local function getAssetSlot(asset)
     end
     local slot=typeName and bundleTypeToSlot[typeName]
     if slot then return slot end
-    if rawType~=nil and typeName~="" then return nil end
+    if rawType~=nil and typeName~="" and typeName~="Animation" and typeName~="24" and typeName~="Asset" then return nil end
     -- Fallback only if metadata omitted, not for random non-animation assets.
     local n=string.lower(tostring(asset.Name or asset.name or ""))
     if string.find(n,"run",1,true) then return "run" end
@@ -603,34 +603,41 @@ local function resolveBundlePack(pack)
     if pack.clips then return true end
     local bundleId=tonumber(pack.bundleId)
     if not bundleId then return false end
-    local a=guarded(function()
-        return AvatarEditorService:GetItemDetailsAsync(bundleId,Enum.AvatarItemType.Bundle)
-    end)
-    local list=a and (a.BundledItems or a.Items)
-    if type(list)~="table" or #list==0 then
-        local b=guarded(function() return AssetService:GetBundleDetailsAsync(bundleId) end)
-        list=b and (b.Items or b.BundledItems)
-    end
-    if type(list)~="table" or #list==0 then
-        say("Roblox didn't provide bundle assets for: "..pack.name)
-        return false
-    end
     local clips={}
     local seen=0
-    for _,asset in ipairs(list) do
-        local id=tonumber(asset.Id or asset.id)
-        local slot=getAssetSlot(asset)
-        if id and id>0 and slot then
-            if slot=="idle1" and clips.idle1 then slot="idle2" end
-            if slot=="swim" and clips.swim then slot="swimidle" end
-            if not clips[slot] then
-                clips[slot]=id
-                seen=seen+1
+    local function collect(list)
+        if type(list)~="table" then return end
+        for _,asset in ipairs(list) do
+            local id=tonumber(asset.Id or asset.id)
+            local slot=getAssetSlot(asset)
+            if id and id>0 and slot then
+                if slot=="idle1" and clips.idle1 then
+                    -- An extra idle can use the same asset type.
+                    if clips.idle1~=id then slot="idle2" else slot=nil end
+                elseif slot=="swim" and clips.swim then
+                    if clips.swim~=id then slot="swimidle" else slot=nil end
+                end
+                if slot and not clips[slot] then
+                    clips[slot]=id
+                    seen=seen+1
+                end
             end
         end
     end
+
+    local a=guarded(function()
+        return AvatarEditorService:GetItemDetailsAsync(bundleId,Enum.AvatarItemType.Bundle)
+    end)
+    if a then collect(a.BundledItems or a.Items) end
+
+    -- Retry with the dedicated bundle-details endpoint when the catalog
+    -- metadata is missing or incomplete. Do not treat a bundle ID as a clip.
     if seen<3 then
-        say(string.format("Found only %d locomotion clips in %s.",seen,pack.name))
+        local b=guarded(function() return AssetService:GetBundleDetailsAsync(bundleId) end)
+        if b then collect(b.Items or b.BundledItems) end
+    end
+    if seen<3 then
+        say(string.format("Only %d R15 clips found in %s (unsupported bundle).",seen,pack.name))
         return false
     end
     clips.idle2=clips.idle2 or clips.idle1
