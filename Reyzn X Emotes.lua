@@ -1421,11 +1421,10 @@ local logoLauncher=new("ImageButton",gui,{
     Name="EmotesLogoLauncher",Size=UDim2.fromOffset(66,66),
     Position=UDim2.fromOffset(16,155),
     Image="",ScaleType=Enum.ScaleType.Fit,
-    BackgroundColor3=palette.base,BorderSizePixel=0,
+    BackgroundTransparency=1,BorderSizePixel=0,
     AutoButtonColor=false,Active=true,Visible=false,ZIndex=60
 })
-round(logoLauncher,15)
-outline(logoLauncher,palette.purple,0.18)
+-- The PNG has its own rounded shape. No secondary frame or border.
 local launcherFallback=new("TextLabel",logoLauncher,{
     Size=UDim2.fromScale(1,1),BackgroundTransparency=1,
     Text="R",TextColor3=palette.purple,
@@ -1464,14 +1463,14 @@ task.spawn(function()
         warn("[Reyzn X Emotes] Logo requires getcustomasset/getsynasset.")
         return
     end
-    local filename="ReyznXEmotes_R_logo.png"
+    local filename="ReyznXEmotes_R_logo_centered_v2.png"
     local cached=false
     if type(readfile)=="function" then
         local ok,bytes=pcall(function() return readfile(filename) end)
         cached=ok and validLogo(bytes)
     end
     if not cached and type(writefile)=="function" then
-        local url="https://raw.githubusercontent.com/hzReyzn/Roblox-yeahhh-/reyzn-emotes-v18-logo-8keys-test/assets/reyzn-emotes-logo.b64"
+        local url="https://raw.githubusercontent.com/hzReyzn/Roblox-yeahhh-/reyzn-emotes-v18-logo-8keys-test/assets/reyzn-emotes-logo-centered-v2.b64"
         local ok,encoded=pcall(function() return game:HttpGet(url) end)
         if ok then
             local bytes=decodeLogo(encoded)
