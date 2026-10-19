@@ -1,5 +1,5 @@
 --[[
- Reyzn X Emotes v1.6-cache-test | standalone universal R15 emote & animation browser
+ Reyzn X Emotes v1.6-free-drag-test | standalone universal R15 emote & animation browser
  Built from scratch. Inspired by standard emote catalog and Animator techniques.
  Designed for desktop + mobile. No purchase/access-control bypass.
  FE note: only animations that Roblox successfully loads on a SERVER-CREATED
@@ -1169,26 +1169,62 @@ trackConnection(minimize.MouseButton1Click,function()
     minimize.Text=minimized and "+" or "−"
 end)
 
+-- Free-area drag: top, sides, bottom and empty panel space.
+-- Never steal gestures from tabs, search, buttons or the scrolling list.
 local drag=false
 local dragOrigin,dragPosition,dragTouch
-trackConnection(header.InputBegan,function(input)
-    if input.UserInputType==Enum.UserInputType.MouseButton1
-        or input.UserInputType==Enum.UserInputType.Touch then
-        drag=true
-        dragOrigin=input.Position
-        dragPosition=root.Position
-        dragTouch=input
+local function pointInside(object,point)
+    if not object or not object.Visible then return false end
+    local pos,size=object.AbsolutePosition,object.AbsoluteSize
+    return point.X>=pos.X and point.Y>=pos.Y
+        and point.X<=pos.X+size.X and point.Y<=pos.Y+size.Y
+end
+local function overInteractiveControl(point)
+    if pointInside(close,point) or pointInside(minimize,point) then return true end
+    if minimized then return false end
+    if pointInside(searchBox,point) or pointInside(searchCatalog,point)
+        or pointInside(list,point) or pointInside(prev,point)
+        or pointInside(next,point) then return true end
+    for _,tab in pairs(tabs) do
+        if pointInside(tab,point) then return true end
     end
-end)
+    return false
+end
+local function beginDrag(input)
+    if not running or drag then return end
+    local kind=input.UserInputType
+    if kind~=Enum.UserInputType.MouseButton1
+        and kind~=Enum.UserInputType.Touch then return end
+    if not pointInside(root,input.Position)
+        or overInteractiveControl(input.Position) then return end
+    drag=true
+    dragOrigin=input.Position
+    dragPosition=root.Position
+    dragTouch=input
+end
+-- Listen on every noninteractive background, not just the header.
+-- This includes the edge margins on the root Frame.
+for _,surface in ipairs({root,header,bar,sidebar,body,statusText,pageLabel}) do
+    surface.Active=true
+    trackConnection(surface.InputBegan,beginDrag)
+end
 trackConnection(UserInputService.InputChanged,function(input)
-    if drag and (input==dragTouch or input.UserInputType==Enum.UserInputType.MouseMovement) then
+    if not drag or not dragTouch then return end
+    local isPointer=(dragTouch.UserInputType==Enum.UserInputType.MouseButton1
+        and input.UserInputType==Enum.UserInputType.MouseMovement)
+    if input==dragTouch or isPointer then
         local delta=input.Position-dragOrigin
         root.Position=UDim2.new(dragPosition.X.Scale,dragPosition.X.Offset+delta.X,
             dragPosition.Y.Scale,dragPosition.Y.Offset+delta.Y)
     end
 end)
 trackConnection(UserInputService.InputEnded,function(input)
-    if input==dragTouch then drag=false end
+    if input==dragTouch or (dragTouch
+        and dragTouch.UserInputType==Enum.UserInputType.MouseButton1
+        and input.UserInputType==Enum.UserInputType.MouseButton1) then
+        drag=false
+        dragTouch=nil
+    end
 end)
 
 local function closeUI()
