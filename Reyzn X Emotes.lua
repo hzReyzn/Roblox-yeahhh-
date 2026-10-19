@@ -1,5 +1,5 @@
 --[[
- Reyzn X Emotes v1.6-free-drag-test | standalone universal R15 emote & animation browser
+ Reyzn X Emotes v1.7-fastkeys-test | standalone universal R15 emote & animation browser
  Built from scratch. Inspired by standard emote catalog and Animator techniques.
  Designed for desktop + mobile. No purchase/access-control bypass.
  FE note: only animations that Roblox successfully loads on a SERVER-CREATED
@@ -506,6 +506,95 @@ if type(isfile)=="function" and type(readfile)=="function" then
         end
     end)
 end
+-- Five independently draggable on-screen emote shortcuts.
+-- Files are optional; when unavailable the bindings last for this session.
+local fastKeyFile="ReyznXEmotes_fastkeys_v1.json"
+local fastKeyBindings={}
+local fastKeyPositions={}
+local fastKeyButtons={}
+local function validFastKeyId(id)
+    return type(id)=="number" and id>0 and id<9007199254740992
+        and id%1==0
+end
+do
+    if type(readfile)=="function" then
+        local ok,raw=pcall(function()
+            if type(isfile)=="function" and not isfile(fastKeyFile) then return nil end
+            return readfile(fastKeyFile)
+        end)
+        if ok and type(raw)=="string" and #raw<16000 then
+            local decodedOk,data=pcall(function() return HttpService:JSONDecode(raw) end)
+            if decodedOk and type(data)=="table" and data.version==1 then
+                for i=1,5 do
+                    local entry=type(data.slots)=="table" and data.slots[tostring(i)]
+                    if type(entry)=="table" and validFastKeyId(entry.id) then
+                        local fallback=entry.fallback
+                        if not validFastKeyId(fallback) then fallback=nil end
+                        fastKeyBindings[i]={
+                            kind="Emote",
+                            id=entry.id,
+                            name=type(entry.name)=="string"
+                                and string.sub(entry.name,1,90) or ("Emote "..tostring(entry.id)),
+                            fallback=fallback
+                        }
+                    end
+                    local position=type(data.positions)=="table"
+                        and data.positions[tostring(i)]
+                    if type(position)=="table" and type(position.x)=="number"
+                        and type(position.y)=="number"
+                        and position.x>=0 and position.x<=1
+                        and position.y>=0 and position.y<=1 then
+                        fastKeyPositions[i]={x=position.x,y=position.y}
+                    end
+                end
+            end
+        end
+    end
+end
+local function saveFastKeys()
+    if type(writefile)~="function" then return end
+    local slots,positions={},{}
+    for i=1,5 do
+        local entry=fastKeyBindings[i]
+        if entry then
+            slots[tostring(i)]={
+                id=entry.id,name=entry.name,fallback=entry.fallback
+            }
+        end
+        if fastKeyPositions[i] then
+            positions[tostring(i)]=fastKeyPositions[i]
+        end
+    end
+    local ok,err=pcall(function()
+        writefile(fastKeyFile,HttpService:JSONEncode({
+            version=1,slots=slots,positions=positions
+        }))
+    end)
+    if not ok then
+        warn("[Reyzn X Emotes] Could not save FastKeys:",err)
+    end
+end
+local function updateFastKeyButton(i)
+    local visual=fastKeyButtons[i]
+    if not visual then return end
+    local entry=fastKeyBindings[i]
+    visual.name.Text=entry and entry.name or "EMPTY"
+    visual.button.BackgroundColor3=entry
+        and Color3.fromRGB(82,43,140) or Color3.fromRGB(33,29,47)
+end
+local function assignFastKey(i,item)
+    if type(i)~="number" or i<1 or i>5 or item.kind~="Emote" then return end
+    fastKeyBindings[i]={kind="Emote",id=item.id,name=item.name,fallback=item.fallback}
+    updateFastKeyButton(i)
+    saveFastKeys()
+    say("FastKey "..i.." assigned: "..item.name)
+end
+local function clearFastKey(i)
+    fastKeyBindings[i]=nil
+    updateFastKeyButton(i)
+    saveFastKeys()
+end
+
 local function itemKey(it) return it.kind..":"..tostring(it.id) end
 
 local function stopCurrentEmote()
@@ -1158,6 +1247,164 @@ local pageLabel=text(body,"Page 1",115,287,225,33,12,true,palette.muted)
 pageLabel.TextXAlignment=Enum.TextXAlignment.Center
 statusText=text(root,"Ready • Reproduction may be restricted by game",15,428,598,22,11,false,palette.muted)
 
+-- FastKeys are independent ScreenGui children, so they remain visible
+-- when the main window is minimized. Five small keys start at upper-right,
+-- safely above the usual mobile jump button.
+local FAST_SIZE=48
+local FAST_GAP=5
+local fastKeyPicker
+local fastKeyPickerTitle
+local fastKeyPickerOptions={}
+local fastKeyPendingEmote=nil
+local function openFastKeyPicker(item)
+    if not item or item.kind~="Emote" then return end
+    fastKeyPendingEmote=item
+    fastKeyPickerTitle.Text="Assign emote: "..tostring(item.name)
+    for i=1,5 do
+        local bound=fastKeyBindings[i]
+        fastKeyPickerOptions[i].Text="F"..i.."\n"..(bound and bound.name or "Empty")
+    end
+    fastKeyPicker.Visible=true
+end
+
+fastKeyPicker=new("Frame",root,{
+    Name="FastKeyChooser",
+    Position=UDim2.fromOffset(99,173),
+    Size=UDim2.fromOffset(430,122),
+    BackgroundColor3=palette.panel,BorderSizePixel=0,
+    ZIndex=40,Visible=false
+})
+round(fastKeyPicker,12)
+outline(fastKeyPicker,palette.purple,0.08)
+fastKeyPickerTitle=new("TextLabel",fastKeyPicker,{
+    Position=UDim2.fromOffset(14,8),Size=UDim2.fromOffset(352,29),
+    BackgroundTransparency=1,Text="Choose FastKey",
+    TextColor3=palette.white,Font=Enum.Font.GothamBold,
+    TextSize=13,TextXAlignment=Enum.TextXAlignment.Left,
+    TextTruncate=Enum.TextTruncate.AtEnd,ZIndex=41
+})
+local pickerClose=new("TextButton",fastKeyPicker,{
+    Position=UDim2.fromOffset(389,8),Size=UDim2.fromOffset(30,30),
+    BackgroundColor3=palette.row,BorderSizePixel=0,
+    Text="×",TextColor3=palette.white,Font=Enum.Font.GothamBold,
+    TextSize=19,ZIndex=42
+})
+round(pickerClose,7)
+trackConnection(pickerClose.MouseButton1Click,function()
+    fastKeyPicker.Visible=false
+    fastKeyPendingEmote=nil
+end)
+for i=1,5 do
+    local slotIndex=i
+    local key=new("TextButton",fastKeyPicker,{
+        Position=UDim2.fromOffset(13+(i-1)*83,48),
+        Size=UDim2.fromOffset(73,61),
+        BackgroundColor3=palette.row,BorderSizePixel=0,
+        Font=Enum.Font.GothamBold,TextSize=10,
+        TextColor3=palette.white,TextWrapped=true,
+        Text="F"..i.."\nEmpty",ZIndex=42
+    })
+    round(key,8)
+    fastKeyPickerOptions[i]=key
+    trackConnection(key.MouseButton1Click,function()
+        if fastKeyPendingEmote then
+            assignFastKey(slotIndex,fastKeyPendingEmote)
+        end
+        fastKeyPendingEmote=nil
+        fastKeyPicker.Visible=false
+    end)
+end
+
+local activeFastKeyGesture=nil
+local function viewportDimensions()
+    local camera=workspace.CurrentCamera
+    return camera and camera.ViewportSize or Vector2.new(900,600)
+end
+for i=1,5 do
+    local slotIndex=i
+    local initial=UDim2.new(1,-(10+(5-i)*(FAST_SIZE+FAST_GAP)+FAST_SIZE),0,75)
+    local saved=fastKeyPositions[i]
+    if saved then initial=UDim2.fromScale(saved.x,saved.y) end
+    local key=new("TextButton",gui,{
+        Name="ReyznFastKey"..i,
+        Position=initial,
+        Size=UDim2.fromOffset(FAST_SIZE,FAST_SIZE),
+        BackgroundColor3=palette.row,BorderSizePixel=0,
+        Text="",AutoButtonColor=true,Active=true,
+        ZIndex=35
+    })
+    round(key,9)
+    outline(key,palette.purple,0.3)
+    local number=new("TextLabel",key,{
+        BackgroundTransparency=1,Position=UDim2.fromOffset(2,3),
+        Size=UDim2.fromOffset(44,19),Text="F"..i,
+        Font=Enum.Font.GothamBold,TextSize=14,
+        TextColor3=palette.white,ZIndex=36
+    })
+    local name=new("TextLabel",key,{
+        BackgroundTransparency=1,Position=UDim2.fromOffset(3,25),
+        Size=UDim2.fromOffset(42,16),Text="EMPTY",
+        Font=Enum.Font.Gotham,TextSize=9,
+        TextColor3=palette.white,ZIndex=36,
+        TextTruncate=Enum.TextTruncate.AtEnd
+    })
+    fastKeyButtons[i]={button=key,name=name,number=number}
+    updateFastKeyButton(i)
+    trackConnection(key.InputBegan,function(input)
+        if not running or activeFastKeyGesture then return end
+        local kind=input.UserInputType
+        if kind~=Enum.UserInputType.MouseButton1
+            and kind~=Enum.UserInputType.Touch then return end
+        activeFastKeyGesture={
+            index=slotIndex,input=input,
+            origin=input.Position,
+            initial=key.AbsolutePosition,
+            moved=false
+        }
+    end)
+end
+trackConnection(UserInputService.InputChanged,function(input)
+    local g=activeFastKeyGesture
+    if not g then return end
+    local mouse=(g.input.UserInputType==Enum.UserInputType.MouseButton1
+        and input.UserInputType==Enum.UserInputType.MouseMovement)
+    if input~=g.input and not mouse then return end
+    local delta=input.Position-g.origin
+    if delta.Magnitude>=9 then g.moved=true end
+    if not g.moved then return end
+    local view=viewportDimensions()
+    local x=math.clamp(g.initial.X+delta.X,4,math.max(4,view.X-FAST_SIZE-4))
+    local y=math.clamp(g.initial.Y+delta.Y,44,math.max(44,view.Y-FAST_SIZE-4))
+    fastKeyButtons[g.index].button.Position=UDim2.fromOffset(x,y)
+end)
+trackConnection(UserInputService.InputEnded,function(input)
+    local g=activeFastKeyGesture
+    if not g then return end
+    local mouseUp=(g.input.UserInputType==Enum.UserInputType.MouseButton1
+        and input.UserInputType==Enum.UserInputType.MouseButton1)
+    if input~=g.input and not mouseUp then return end
+    activeFastKeyGesture=nil
+    if g.moved then
+        local key=fastKeyButtons[g.index].button
+        local view=viewportDimensions()
+        fastKeyPositions[g.index]={
+            x=math.clamp(key.AbsolutePosition.X/math.max(1,view.X),0,1),
+            y=math.clamp(key.AbsolutePosition.Y/math.max(1,view.Y),0,1)
+        }
+        saveFastKeys()
+        return
+    end
+    local emote=fastKeyBindings[g.index]
+    if emote then
+        task.spawn(function()
+            if running then playEmote(emote) end
+        end)
+    else
+        say("FastKey F"..g.index.." is empty. Tap KEY beside an emote to assign it.")
+    end
+end)
+
+
 local minimized=false
 trackConnection(minimize.MouseButton1Click,function()
     minimized=not minimized
@@ -1167,6 +1414,7 @@ trackConnection(minimize.MouseButton1Click,function()
     body.Visible=not minimized
     statusText.Visible=not minimized
     minimize.Text=minimized and "+" or "−"
+    if minimized then fastKeyPicker.Visible=false;fastKeyPendingEmote=nil end
 end)
 
 -- Free-area drag: top, sides, bottom and empty panel space.
@@ -1196,6 +1444,7 @@ local function beginDrag(input)
     if kind~=Enum.UserInputType.MouseButton1
         and kind~=Enum.UserInputType.Touch then return end
     if not pointInside(root,input.Position)
+        or pointInside(fastKeyPicker,input.Position)
         or overInteractiveControl(input.Position) then return end
     drag=true
     dragOrigin=input.Position
@@ -1251,16 +1500,25 @@ local function listItem(item,index)
         BackgroundColor3=palette.row,BorderSizePixel=0
     })
     round(frame,8)
-    text(frame,item.name,11,5,246,23,13,true)
-    text(frame,item.origin,11,28,245,17,10,false,palette.muted)
-    local b=button(frame,item.kind=="Pack" and "APPLY" or "PLAY",286,9,76,33,true)
+    local isEmote=item.kind=="Emote"
+    text(frame,item.name,11,5,isEmote and 213 or 246,23,13,true)
+    text(frame,item.origin,11,28,isEmote and 213 or 245,17,10,false,palette.muted)
+    local b=button(frame,isEmote and "PLAY" or "APPLY",
+        isEmote and 222 or 286,9,isEmote and 72 or 76,33,true)
     trackConnection(b.MouseButton1Click,function()
-        if item.kind=="Pack" then
-            task.spawn(function() activatePack(item) end)
-        else
+        if isEmote then
             task.spawn(function() playEmote(item) end)
+        else
+            task.spawn(function() activatePack(item) end)
         end
     end)
+    if isEmote then
+        local assign=button(frame,"KEY",302,9,60,33,false)
+        assign.TextColor3=palette.purple
+        trackConnection(assign.MouseButton1Click,function()
+            openFastKeyPicker(item)
+        end)
+    end
     local key=itemKey(item)
     local fav=button(frame,favorites[key] and "★" or "☆",369,9,37,33,false)
     fav.TextSize=18
@@ -1355,6 +1613,15 @@ render=function()
                 and "Saved animation IDs cleared. Reapply a pack to refresh."
                 or "Session cache cleared (file storage unavailable).")
         end)
+        for i=1,5 do
+            local slotIndex=i
+            local bound=fastKeyBindings[i]
+            settingLine("Clear F"..i..": "..(bound and bound.name or "Empty"),6+i,function()
+                clearFastKey(slotIndex)
+                say("FastKey F"..slotIndex.." cleared.")
+                render()
+            end)
+        end
         return
     end
     local items=filtered()
