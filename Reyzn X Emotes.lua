@@ -1,5 +1,5 @@
 --[[
- Reyzn X Emotes v1.5 | standalone universal R15 emote & animation browser
+ Reyzn X Emotes v1.5-smooth-test | standalone universal R15 emote & animation browser
  Built from scratch. Inspired by standard emote catalog and Animator techniques.
  Designed for desktop + mobile. No purchase/access-control bypass.
  FE note: only animations that Roblox successfully loads on a SERVER-CREATED
@@ -672,6 +672,13 @@ local function resolveCatalogMovementClips(pack,request)
             say("Resolving "..pack.name..": "..total.." catalog clips checked...")
             local clipId=attempted[assetId]
             if clipId==nil then
+                -- Allow the HUD and game to draw a frame before another
+                -- synchronous GetObjects request. This reduces continuous
+                -- stalls on mobile without changing the working FLY method.
+                if not catalogAnimationIds[assetId] then
+                    task.wait(0.05)
+                    if not running or request~=packRequestGeneration then return nil end
+                end
                 clipId=resolveCatalogAnimation(assetId) or false
                 attempted[assetId]=clipId
             end
