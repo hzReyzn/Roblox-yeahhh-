@@ -1624,8 +1624,8 @@ local function listItem(item,index)
     })
     round(frame,8)
     local isEmote=item.kind=="Emote"
-    text(frame,item.name,11,5,isEmote and 213 or 246,23,13,true)
-    text(frame,item.origin,11,28,isEmote and 213 or 245,17,10,false,palette.muted)
+    -- Single clean title: origin labels were decorative clutter.
+    text(frame,item.name,11,12,isEmote and 213 or 246,28,13,true)
     local b=button(frame,isEmote and "PLAY" or "APPLY",
         isEmote and 222 or 286,9,isEmote and 72 or 76,33,true)
     trackConnection(b.MouseButton1Click,function()
