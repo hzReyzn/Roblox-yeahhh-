@@ -1344,7 +1344,7 @@ local headerLogo=new("ImageLabel",header,{
 local headerLogoFallback=text(header,"R",18,10,40,40,29,true,palette.purple)
 headerLogoFallback.TextXAlignment=Enum.TextXAlignment.Center
 text(header,"REYZN X",73,14,145,32,22,true,palette.white)
-text(header,"EMOTES",207,14,123,32,22,true,palette.purple)
+text(header,"FE EMOTES",207,14,180,32,22,true,palette.purple)
 local minimize=button(header,"−",548,14,30,30,false)
 local close=button(header,"×",586,14,30,30,false)
 local bar=new("Frame",root,{Position=UDim2.fromOffset(0,66),
@@ -1357,7 +1357,8 @@ local body=new("Frame",root,{Position=UDim2.fromOffset(164,79),
 round(body,11)
 local tabs={}
 for i,name in ipairs({"Emotes","Packs","Favorites","Settings"}) do
-    tabs[name]=button(sidebar,name,9,10+(i-1)*51,123,40,false)
+    local displayName = name=="Emotes" and "FE Emotes" or (name=="Packs" and "Animations" or name)
+    tabs[name]=button(sidebar,displayName,9,10+(i-1)*51,123,40,false)
     trackConnection(tabs[name].MouseButton1Click,function()
         currentTab=name
         searchTerm="";localPage=1
@@ -1375,7 +1376,7 @@ searchBox=new("TextBox",body,{
 })
 new("UIPadding",searchBox,{PaddingLeft=UDim.new(0,11)})
 round(searchBox,8)
-local searchCatalog=button(body,"Load 240 Emotes",299,11,140,37,true)
+local searchCatalog=button(body,"Load more",299,11,140,37,true)
 local list=new("ScrollingFrame",body,{
     Position=UDim2.fromOffset(12,60),Size=UDim2.fromOffset(427,216),
     BackgroundTransparency=1,BorderSizePixel=0,ScrollBarThickness=3,
@@ -1831,7 +1832,7 @@ render=function()
     end
     searchBox.Visible=currentTab~="Settings"
     searchCatalog.Visible=currentTab=="Emotes" or currentTab=="Packs"
-    searchCatalog.Text=currentTab=="Emotes" and "Load 240 Emotes" or "Find 120 Packs"
+    searchCatalog.Text="Load more"
     prev.Visible=currentTab~="Settings"
     next.Visible=currentTab~="Settings"
     if currentTab=="Settings" then
