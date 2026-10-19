@@ -669,15 +669,23 @@ local function beginEmotePriority(animator)
     end
     currentMovement=nil
 
-    local function captureTrack(track)
+    local alreadyPlaying={}
+    local existing=guarded(function() return animator:GetPlayingAnimationTracks() end)
+    if type(existing)=="table" then
+        for _,track in ipairs(existing) do alreadyPlaying[track]=true end
+    end
+
+    local function captureTrack(track,explicit)
         if not running or token~=emoteGeneration
             or emoteAnimator~=animator or activeEmoteTrack then return end
+        if alreadyPlaying[track] and not explicit then return end
         for _,movementTrack in pairs(movementTracks) do
             if movementTrack==track then return end
         end
         -- Ignore ordinary idle/walk/run tracks fired by Animate.
         local priority=guarded(function() return track.Priority end)
-        if not priority or priority.Value<Enum.AnimationPriority.Action.Value then return end
+        if not explicit and (not priority
+            or priority.Value<Enum.AnimationPriority.Action.Value) then return end
         activeEmoteTrack=track
         if emotePlayedConnection then
             emotePlayedConnection:Disconnect()
@@ -692,9 +700,13 @@ local function beginEmotePriority(animator)
     end
     emotePlayedConnection=animator.AnimationPlayed:Connect(captureTrack)
 
-    -- Some emote APIs return a Boolean rather than a track. In that case
-    -- inspect the Animator once after invoking the emote. If no track was
-    -- observable, remove the priority hold rather than freeze walking.
+    return token,captureTrack
+end
+
+-- The official API can yield while Roblox fetches the emote. Start its
+-- no-track timeout AFTER the API returns, so slow network requests never
+-- reactivate locomotion before their emote has begun.
+local function watchOfficialEmote(token,animator,captureTrack)
     task.delay(1.25,function()
         if not running or token~=emoteGeneration
             or not emoteMovementPaused or activeEmoteTrack then return end
@@ -705,9 +717,10 @@ local function beginEmotePriority(animator)
                 if activeEmoteTrack then break end
             end
         end
+        -- Do not permanently suppress the selected movement pack if Roblox
+        -- did not expose a playable emote track.
         if not activeEmoteTrack then finishEmote(token) end
     end)
-    return token,captureTrack
 end
 
 local function killMovement()
@@ -745,6 +758,7 @@ local function playEmote(item)
             if token~=emoteGeneration then return end
             if ok and played then
                 activeEmoteRequested=true
+                watchOfficialEmote(token,animator,captureTrack)
                 say("Emote requested: "..item.name.." | movement resumes afterward")
                 return
             end
@@ -756,9 +770,10 @@ local function playEmote(item)
         if token~=emoteGeneration then return end
         if ok and trackOrResult then
             if typeof(trackOrResult)=="Instance" and trackOrResult:IsA("AnimationTrack") then
-                captureTrack(trackOrResult)
+                captureTrack(trackOrResult,true)
             end
             activeEmoteRequested=true
+            watchOfficialEmote(token,animator,captureTrack)
             say("Emote invoked: "..item.name.." | movement resumes afterward")
             return
         end
