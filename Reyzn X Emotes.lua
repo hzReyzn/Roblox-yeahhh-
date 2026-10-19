@@ -1,5 +1,5 @@
 --[[
- Reyzn X Emotes v1.0 | standalone universal R15 emote & animation browser
+ Reyzn X Emotes v1.1 | standalone universal R15 emote & animation browser
  Built from scratch. Inspired by standard emote catalog and Animator techniques.
  Designed for desktop + mobile. No purchase/access-control bypass.
  FE note: only animations that Roblox successfully loads on a SERVER-CREATED
@@ -114,6 +114,256 @@ for _,e in ipairs(classic) do
     addEmote(e[1],e[2],"Classic Animation",e[2])
 end
 
+-- Additional emote catalog IDs (curated reference metadata, not a guarantee of access).
+-- Reference: https://github.com/MainScripts352/Database/blob/main/Roblox%20Emotes.json
+-- Facial animation assets are excluded; they are not full-body emotes.
+local referenceEmotes = {
+    {"Top Rock",3570535774},
+    {"Jacks",3570649048},
+    {"Shy",3576717965},
+    {"T",3576719440},
+    {"Robot",3576721660},
+    {"Fashionable",3576745472},
+    {"Around Town",3576747102},
+    {"Louder",3576751796},
+    {"Sneaky",3576754235},
+    {"Hype Dance",3696757129},
+    {"Superhero Reveal",3696759798},
+    {"Air Guitar",3696761354},
+    {"Heisman Pose",3696763549},
+    {"Cha-Cha",3696764866},
+    {"Twirl",3716633898},
+    {"Monkey",3716636630},
+    {"Side to Side",3762641826},
+    {"Greatest",3762654854},
+    {"Swish",3821527813},
+    {"Godlike",3823158750},
+    {"Get Out",3934984583},
+    {"Dizzy",3934986896},
+    {"Fancy Feet",3934988903},
+    {"Celebrate",3994127840},
+    {"Fishing",3994129128},
+    {"Bodybuilder",3994130516},
+    {"Tree",4049634387},
+    {"Line Dance",4049646104},
+    {"Haha",4102315500},
+    {"Idol",4102317848},
+    {"Zombie",4212496830},
+    {"Dorky Dance",4212499637},
+    {"Fast Hands",4272351660},
+    {"Baby Dance",4272484885},
+    {"Drum Master - Royal Blood",6531538868},
+    {"Dolphin Dance",5938365243},
+    {"Sad",4849502101},
+    {"Floss Dance",5917570207},
+    {"BURBERRY LOLA ATTITUDE - NIMBUS",10147924028},
+    {"Vans Ollie",18305539673},
+    {"Rodeo Dance - Lil Nas XvLNX",5938397555},
+    {"Samba Step Dance",14620757085},
+    {"Hero Landing",5104377791},
+    {"Elton John - Rock Out",11753545334},
+    {"Paris Hilton Sanasa",16126526506},
+    {"TWICE What Is Love",13344121112},
+    {"Agree",4849487550},
+    {"Rock On",5915782672},
+    {"TWICE Fancy",13520623514},
+    {"Baby Queen - Dramatic Bow",14353419229},
+    {"Hips Poppin - Zara Larsson",6797919579},
+    {"Mean Mug - Tommy Hilfiger",10214415687},
+    {"You can't sit with us - Sunmi",9983549160},
+    {"BLACKPINK Ice Cream",16181840356},
+    {"Wake Up Call - KSI",7202900159},
+    {"BLACKPINK - Lovesick Girls",16874600526},
+    {"Victory - 24kGoldn",9178397781},
+    {"MANIAC - Stray Kids",11309309359},
+    {"Secret Handshake Dance",120642514156293},
+    {"BLACKPINK - How You Like That",16874596971},
+    {"BLACKPINK Pink Venom - I Bring the Pain Like",14548710952},
+    {"Sturdy Dance - Ice Spice",17746270218},
+    {"Boom Boom Clap - George Ezra",10370934040},
+    {"Nicki Minaj Anaconda",15571539403},
+    {"TWICE Strategy",106862678450011},
+    {"Mean Girls Dance Break",15963348695},
+    {"Floor Rock Freeze - Tommy Hilfiger",10214411646},
+    {"Elton John - Cat Man",11435175895},
+    {"Olivia Rodrigo Head Bop",15554010118},
+    {"Cartwheel - George Ezra",10370929905},
+    {"Daves Spin Move - Glass Animals",16276501655},
+    {"Super Charge",10478368365},
+    {"Cha Cha",6865013133},
+    {"Paris Hilton - Iconic IT Grrrl",15392932768},
+    {"TWICE Like Ooh-Ahh",14124050904},
+    {"Olympic Dismount",18666650035},
+    {"HOLIDAY Dance - Lil Nas X LNX",5938396308},
+    {"TWICE Moonlight Sunrise",12715393154},
+    {"Show Dem Wrists - KSI",7202898984},
+    {"Cobra Arms - Tai Verdes",7942964447},
+    {"SpongeBob Imaginaaation",18443268949},
+    {"Sidekicks - George-Ezra",10370922566},
+    {"Take Me Under - Zara Larsson",6797938823},
+    {"Sol de Janeiro - Samba",16276506814},
+    {"Jumping Wave",4940602656},
+    {"Wanna play?",16646438742},
+    {"thhsv3",14109936431},
+    {"Rock Out - BebevRexha",18225077553},
+    {"Head Banging",5915779725},
+    {"High Wave",5915776835},
+    {"Victory Dance",15506503658},
+    {"BLACKPINK Don't know what to do",18855609889},
+    {"Uprise - Tommy Hilfiger",10275057230},
+    {"SpongeBob Dance",18443271885},
+    {"Paris Hilton - Sliving For The Groove",15392927897},
+    {"Arm Twist",9710992846},
+    {"Chicken Dance",4849493309},
+    {"Alo Yoga Pose - Triangle",12507120275},
+    {"Elton John - Heart Shuffle",17748346932},
+    {"Ay-Yo Dance Move NCT - 127",12804173616},
+    {"Rock Guitar - Royal Blood",6532155086},
+    {"Quiet Waves",7466046574},
+    {"Rolling Stones Guitar Strum",18148839527},
+    {"BLACKPINK As If It's Your Last",18855603653},
+    {"Flowing Breeze",7466047578},
+    {"BLACKPINK Kill This Love",16181843366},
+    {"Jawny - Stomp",16392120020},
+    {"Nicki Minaj That's That Super Bass Emote",15571536896},
+    {"Beauty Touchdown",16303091119},
+    {"Gashina - SUNMI",9528294735},
+    {"NBA WNBA Fadeaway",18526373545},
+    {"Rock n Roll",15506496093},
+    {"TWICE ABCD by Nayeon",18933761755},
+    {"Drummer Moves - Twenty One Pilots",7422838770},
+    {"Vroom Vroom",18526410572},
+    {"NBA Monster Dunk",82163305721376},
+    {"TWICE Feel Special",14900153406},
+    {"Block Partier",6865011755},
+    {"BLACKPINK Shut Down - Part 1",14901369589},
+    {"Bunny Hop",4646296016},
+    {"AOK - Tai Verdes",7942960760},
+    {"Panini Dance - Lil Nas X LNX",5915781665},
+    {"Confused",4940592718},
+    {"Olivia Rodrigo good 4 u",15554013003},
+    {"TWICE Pop by Nayeon",13768975574},
+    {"Frosty Flair - Tommy Hilfiger",10214406616},
+    {"Disagree",4849495710},
+    {"Kick It Dance Move - NCT 127",12259888240},
+    {"Happy",4849499887},
+    {"Fashion Klossette - Runway my way",126683684984862},
+    {"Power Blast",4849497510},
+    {"Bored",5230661597},
+    {"The Conductor - George Ezra",10370926562},
+    {"Air Guitar",15506499986},
+    {"Elton John - Piano Jump",11453096488},
+    {"V Pose - Tommy Hilfiger",10214418283},
+    {"Sticker Dance Move - NCT 127",12259885838},
+    {"Samba",6869813008},
+    {"Yungblud Happier Jump",15610015346},
+    {"BLACKPINK Pink Venom - Get em Get em Get em",14548709888},
+    {"BLACKPINK DDU-DU DDU-DU",16553262614},
+    {"Jumping Cheer",5895009708},
+    {"Charli xcx - Apple Dance",18946876350},
+    {"hh1",14851596394},
+    {"Air Dance",4646302011},
+    {"Country Line Dance - Lil Nas X (LNX)",5915780563},
+    {"BURBERRY LOLA ATTITUDE - HYDRO",10147926081},
+    {"BLACKPINK JENNIE You and Me",15439457146},
+    {"BLACKPINK LISA Money",15679957363},
+    {"KATSEYE - Touch",139021427684680},
+    {"Cuco - Levitate",15698511500},
+    {"Flex Walk",15506506103},
+    {"Nicki Minaj Boom Boom Boom",15571538346},
+    {"gdmc",13694143234},
+    {"bby",14851599382},
+    {"Baby Queen - Bouncy Twirl",14353423348},
+    {"TWICE I GOT YOU part 1",16215060261},
+    {"HUGO Lets Drive",17360720445},
+    {"Rise Above - The Chainsmokers",13071993910},
+    {"Swan Dance",7466048475},
+    {"Cower",4940597758},
+    {"newdance",14352435946},
+    {"Elton John - Heart Skip",11309263077},
+    {"TWICE The Feels",12874468267},
+    {"Up and Down - Twenty One Pilots",7422843994},
+    {"Elton John - Still Standing",11435177473},
+    {"TMNT Dance",18665886405},
+    {"Boxing Punch - KSI",7202896732},
+    {"Skadoosh Emote - Kung Fu Panda 4",16371235025},
+    {"Festive Dance",15679955281},
+    {"ALTÉGO - Couldn t Care Less",5938394742},
+    {"On The Outside - Twenty One Pilots",7422841700},
+    {"Saturday Dance - Twenty One Pilots",7422833723},
+    {"Wisp - air guitar",17370797454},
+    {"Skibidi Toilet - Titan Speakerman Laser Spin",103102322875221},
+    {"Sandwich Dance",4390121879},
+    {"BLACKPINK JISOO Flower",15439454888},
+    {"Hwaiting (í™”ì´íŒ…)",9528291779},
+    {"Tommy K-Pop Mic Drop",14024722653},
+    {"hh2",14851597817},
+    {"Chappell Roan HOT TO GO",79312439851071},
+    {"BLACKPINK Pink Venom - Straight to Ya Dome",14548711723},
+    {"Tommy - Archer",13823339506},
+    {"ericdoa - dance",15698510244},
+    {"The Zabb",71389516735424},
+    {"HIPMOTION - Amaarae",16572756230},
+    {"YUNGBLUD HIGH KICK",14022978026},
+    {"Cursty",4646306583},
+    {"Chill Vibes - George Ezra",10370918044},
+    {"BLACKPINK Boombayah Emote",16553259683},
+    {"GloRilla - Tomorrow Dance",15689315657},
+    {"Keeping Time",4646306072},
+    {"Annyeong (ì•ˆë…•)",9528286240},
+    {"Shrek Roar",18524331128},
+    {"Man City Bicycle Kick",13422286833},
+    {"Imagine Dragons Bones Dance",15689314578},
+    {"NBA Monster Dunk",117511481049460},
+    {"Man City Backflip",13694140956},
+    {"Mae Stephens - Arm-Wave",16584496781},
+    {"ms2",16584496763},
+    {"Y",4391211308},
+    {"Hyperfast 5G Dance Move",9408642191},
+    {"Rock Star - Royal Blood",6533100850},
+    {"th-afsc",14024725245},
+    {"Olivia Rodrigo Fall Back to Float",15554016057},
+    {"Dancin' Shoes - Twenty One Pilots",7405123844},
+    {"Mae Stephens - Piano Hands",16553249658},
+    {"Team USA Breaking Emote",18526338976},
+    {"TWICE Set Me Free - Dance 2",12715397488},
+    {"Tantrum",5104374556},
+    {"Shuffle",4391208058},
+    {"Break Dance",5915773992},
+    {"Nicki Minaj Starships",15571540519},
+    {"High Hands",9710994651},
+    {"TWICE I GOT YOU-l part 2",16256253954},
+    {"BLACKPINK Shut Down - Part 2",14901371589},
+    {"BURBERRY LOLA ATTITUDE - REFLEX",10147921916},
+    {"Drum Solo - Royal Blood",6532844183},
+    {"Bone Chillin Bop",15123050663},
+    {"Applaud",5915779043},
+    {"BURBERRY LOLA ATTITUDE - GEM",10147916560},
+    {"Arm Wave",5915773155},
+    {"Sleep",4689362868},
+    {"Lasso Turn - Tai Verdes",7942972744},
+    {"Mini Kong",17000058939},
+    {"Fashion Spin",130046968468383},
+    {"Paris Hilton - Checking My Angles",15392937495},
+    {"d4vd - Backflip",15694504637},
+    {"Alo Yoga Pose - Lotus Position",12507097350},
+    {"It Ain't My Fault - Zara Larsson",6797948622},
+    {"Baby Queen - Air Guitar Knee Slide",14353417553},
+    {"2 Baddies Dance Move - NCT 127",12259890638},
+    {"Beckon",5230615437},
+    {"Elton John - Elevate",11394056822},
+    {"TWICE LIKEY",14900151704},
+    {"Baby Queen - Strut",14353425085},
+    {"Alo Yoga Pose - Warrior II",12507106431},
+    {"Fashion Roadkill",73683655527605},
+    {"TWICE Set Me Free - Dance 1",12715395038},
+    {"Man City Scorpion Kick",13694139364},
+    {"BURBERRY LOLA ATTITUDE - BLOOM",10147919199},
+}
+for _,e in ipairs(referenceEmotes) do
+    addEmote(e[1], e[2], "Catalog Reference")
+end
+
 -- Roblox movement presets; each row is name,run,walk,jump,idle1,idle2,fall,swim,swimidle,climb.
 
 local movementRows = {
@@ -142,6 +392,17 @@ for _,r in ipairs(movementRows) do
         fall=r[7],swim=r[8],swimidle=r[9],climb=r[10]
     })
 end
+-- Extra public R15 movement packs; IDs are clip assets, not bundle IDs.
+addPack("Oldschool",{
+    run=5319900634,walk=5319909330,jump=5319917561,
+    idle1=5319922112,idle2=5319922112,fall=5319914476,
+    swim=5319927054,swimidle=5319927054,climb=5319931619
+})
+addPack("Bold",{
+    run=16738337225,walk=16738340646,jump=16738336650,
+    idle1=16738333868,idle2=16738334710,fall=16738333171,
+    swim=16738339158,swimidle=16738339817,climb=16738332169
+})
 table.sort(packList,function(a,b) return a.name<b.name end)
 
 local function saveFavorites()
@@ -402,7 +663,7 @@ local function catalogQuery(keyword,more)
             local params=CatalogSearchParams.new()
             params.AssetTypes={Enum.AvatarAssetType.EmoteAnimation}
             params.IncludeOffSale=true
-            params.Limit=60
+            params.Limit=120
             params.SortType=Enum.CatalogSortType.RecentlyCreated
             params.SearchKeyword=keyword or ""
             ok,pages=pcall(function()
@@ -521,7 +782,7 @@ searchBox=new("TextBox",body,{
 })
 new("UIPadding",searchBox,{PaddingLeft=UDim.new(0,11)})
 round(searchBox,8)
-local searchCatalog=button(body,"Search Catalog",299,11,140,37,true)
+local searchCatalog=button(body,"Catalog +120",299,11,140,37,true)
 local list=new("ScrollingFrame",body,{
     Position=UDim2.fromOffset(12,60),Size=UDim2.fromOffset(427,216),
     BackgroundTransparency=1,BorderSizePixel=0,ScrollBarThickness=3,
@@ -656,6 +917,7 @@ render=function()
     end
     searchBox.Visible=currentTab~="Settings"
     searchCatalog.Visible=currentTab=="Emotes"
+    searchCatalog.Text=(catalogPages and catalogKeyword==searchTerm and not catalogExhausted) and "Load Next +120" or "Catalog +120"
     prev.Visible=currentTab~="Settings"
     next.Visible=currentTab~="Settings"
     if currentTab=="Settings" then
