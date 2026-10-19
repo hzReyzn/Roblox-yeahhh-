@@ -1415,15 +1415,129 @@ end)
 
 
 local minimized=false
+-- Only Emotes is changed. As in Reyzn X, the logo is saved with
+-- writefile and displayed with getcustomasset/getsynasset.
+local logoLauncher=new("ImageButton",gui,{
+    Name="EmotesLogoLauncher",Size=UDim2.fromOffset(66,66),
+    Position=UDim2.fromOffset(16,155),
+    Image="",ScaleType=Enum.ScaleType.Fit,
+    BackgroundColor3=palette.base,BorderSizePixel=0,
+    AutoButtonColor=false,Active=true,Visible=false,ZIndex=60
+})
+round(logoLauncher,15)
+outline(logoLauncher,palette.purple,0.18)
+local launcherFallback=new("TextLabel",logoLauncher,{
+    Size=UDim2.fromScale(1,1),BackgroundTransparency=1,
+    Text="R",TextColor3=palette.purple,
+    Font=Enum.Font.GothamBold,TextSize=38,ZIndex=61
+})
+local function decodeLogo(data)
+    if type(data)~="string" or #data<60 or #data>200000 then return nil end
+    local alphabet="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+    local output,carry,bits={},0,0
+    for i=1,#data do
+        local ch=data:sub(i,i)
+        if ch=="=" then break end
+        local pos=alphabet:find(ch,1,true)
+        if pos then
+            carry=carry*64+(pos-1)
+            bits=bits+6
+            if bits>=8 then
+                bits=bits-8
+                local m=2^bits
+                output[#output+1]=string.char(math.floor(carry/m))
+                carry=carry%m
+            end
+        elseif not ch:match("%s") then
+            return nil
+        end
+    end
+    return table.concat(output)
+end
+local function validLogo(bytes)
+    return type(bytes)=="string" and #bytes>64 and #bytes<180000
+       and bytes:sub(1,8)==string.char(137,80,78,71,13,10,26,10)
+end
+task.spawn(function()
+    local customAsset=getcustomasset or getsynasset
+    if type(customAsset)~="function" then
+        warn("[Reyzn X Emotes] Logo requires getcustomasset/getsynasset.")
+        return
+    end
+    local filename="ReyznXEmotes_R_logo.png"
+    local cached=false
+    if type(readfile)=="function" then
+        local ok,bytes=pcall(function() return readfile(filename) end)
+        cached=ok and validLogo(bytes)
+    end
+    if not cached and type(writefile)=="function" then
+        local url="https://raw.githubusercontent.com/hzReyzn/Roblox-yeahhh-/reyzn-emotes-v18-logo-8keys-test/assets/reyzn-emotes-logo.b64"
+        local ok,encoded=pcall(function() return game:HttpGet(url) end)
+        if ok then
+            local bytes=decodeLogo(encoded)
+            if validLogo(bytes) then
+                cached=pcall(function() writefile(filename,bytes) end)
+            end
+        end
+    end
+    if not cached or not running then return end
+    local ok,uri=pcall(customAsset,filename)
+    if ok and type(uri)=="string" and uri~="" and running then
+        headerLogo.Image=uri
+        logoLauncher.Image=uri
+        headerLogoFallback.Visible=false
+        launcherFallback.Visible=false
+    end
+end)
+local function setMinimized(value)
+    minimized=value
+    root.Visible=not value
+    logoLauncher.Visible=value
+    if value then
+        fastKeyPicker.Visible=false
+        fastKeyPendingEmote=nil
+    end
+end
+local launcherGesture
+trackConnection(logoLauncher.InputBegan,function(input)
+    if not running or launcherGesture then return end
+    if input.UserInputType==Enum.UserInputType.MouseButton1
+       or input.UserInputType==Enum.UserInputType.Touch then
+        launcherGesture={
+            start=input.Position,
+            origin=logoLauncher.AbsolutePosition,
+            input=input,moved=false
+        }
+    end
+end)
+trackConnection(UserInputService.InputChanged,function(input)
+    local g=launcherGesture
+    if not g then return end
+    local mouse=g.input.UserInputType==Enum.UserInputType.MouseButton1
+       and input.UserInputType==Enum.UserInputType.MouseMovement
+    if input~=g.input and not mouse then return end
+    local delta=input.Position-g.start
+    if delta.Magnitude>=9 then g.moved=true end
+    if g.moved then
+        local cam=workspace.CurrentCamera
+        local view=cam and cam.ViewportSize or Vector2.new(900,600)
+        logoLauncher.Position=UDim2.fromOffset(
+            math.clamp(g.origin.X+delta.X,4,math.max(4,view.X-70)),
+            math.clamp(g.origin.Y+delta.Y,40,math.max(40,view.Y-70))
+        )
+    end
+end)
+trackConnection(UserInputService.InputEnded,function(input)
+    local g=launcherGesture
+    if not g then return end
+    local mouseUp=g.input.UserInputType==Enum.UserInputType.MouseButton1
+       and input.UserInputType==Enum.UserInputType.MouseButton1
+    if input~=g.input and not mouseUp then return end
+    launcherGesture=nil
+    if running and not g.moved then setMinimized(false) end
+end)
 trackConnection(minimize.MouseButton1Click,function()
-    minimized=not minimized
-    root.Size=UDim2.fromOffset(628,minimized and 66 or 459)
-    bar.Visible=not minimized
-    sidebar.Visible=not minimized
-    body.Visible=not minimized
-    statusText.Visible=not minimized
-    minimize.Text=minimized and "+" or "−"
-    if minimized then fastKeyPicker.Visible=false;fastKeyPendingEmote=nil end
+    setMinimized(true)
 end)
 
 -- Free-area drag: top, sides, bottom and empty panel space.
