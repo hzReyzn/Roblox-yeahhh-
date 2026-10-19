@@ -812,6 +812,15 @@ local function playEmote(item)
             local length=guarded(function() return track.Length end)
             if not length or length<=0 then
                 say("Animation may be unavailable / not loaded in this game.")
+            end
+        end
+    end)
+    -- A truly unavailable clip may never emit Stopped. Do not keep
+    -- suppressing the movement pack forever in that case.
+    task.delay(7,function()
+        if running and token==emoteGeneration and activeEmoteTrack==track then
+            local length=guarded(function() return track.Length end)
+            if not length or length<=0 then
                 pcall(function() track:Stop(0.15) end)
                 finishEmote(token)
             end
