@@ -1,5 +1,5 @@
 --[[
- Reyzn X Emotes v1.2 | standalone universal R15 emote & animation browser
+ Reyzn X Emotes v1.3 | standalone universal R15 emote & animation browser
  Built from scratch. Inspired by standard emote catalog and Animator techniques.
  Designed for desktop + mobile. No purchase/access-control bypass.
  FE note: only animations that Roblox successfully loads on a SERVER-CREATED
@@ -56,6 +56,8 @@ local movementAnimations={}
 local currentMovement=nil
 local currentHumanoid=nil
 local currentAnimator=nil
+local appliedCatalogHumanoid=nil
+local originalCatalogDescriptions=setmetatable({},{__mode="k"})
 local activeEmoteTrack=nil
 local activeEmoteAnimation=nil
 local activeEmoteRequested=false
@@ -456,9 +458,40 @@ local function killMovement()
     currentHumanoid=nil
     currentAnimator=nil
 end
+-- Preserve the character's appearance and restore only animation properties.
+local descriptionSlots = {
+    run="RunAnimation", walk="WalkAnimation", jump="JumpAnimation",
+    fall="FallAnimation", climb="ClimbAnimation", idle1="IdleAnimation",
+    swim="SwimAnimation",
+}
+local function restoreCatalogDescription()
+    local hum=appliedCatalogHumanoid
+    if not hum then return true end
+    local original=originalCatalogDescriptions[hum]
+    if not original or not hum.Parent then
+        appliedCatalogHumanoid=nil
+        return true
+    end
+    local ok,err=pcall(function()
+        local current=hum:GetAppliedDescription()
+        for slot,property in pairs(descriptionSlots) do
+            current[property]=original[property]
+        end
+        hum:ApplyDescriptionAsync(current)
+        current:Destroy()
+    end)
+    if ok then
+        appliedCatalogHumanoid=nil
+        originalCatalogDescriptions[hum]=nil
+    else
+        warn("[Reyzn X Emotes] Couldn't restore catalog animations:",err)
+    end
+    return ok
+end
 local function stopEverything()
     stopCurrentEmote()
     killMovement()
+    restoreCatalogDescription()
     selectedPack=nil
 end
 
@@ -534,48 +567,83 @@ local lastUpdate=0
 -- Discover modern UGC + official R15 animation bundles without hardcoded IDs.
 -- Bundle search results contain bundle IDs, NOT playable animation IDs.
 -- Resolve each bundle to its animation assets only when it is selected.
+-- Bundle items are avatar asset IDs, not necessarily direct Animator track IDs.
+-- Keep both name and AssetType matching for legacy and newer bundle formats.
+local bundleTypeToSlot = {
+    RunAnimation="run", WalkAnimation="walk", JumpAnimation="jump",
+    FallAnimation="fall", ClimbAnimation="climb",
+    SwimAnimation="swim", IdleAnimation="idle1",
+    ["53"]="run",["55"]="walk",["52"]="jump",
+    ["50"]="fall",["48"]="climb",["54"]="swim",["51"]="idle1"
+}
+local function getAssetSlot(asset)
+    local rawType=asset.AssetType or asset.assetType or asset.AssetTypeId or asset.assetTypeId
+    local typeName
+    if typeof(rawType)=="EnumItem" then
+        typeName=rawType.Name
+    elseif rawType~=nil then
+        typeName=tostring(rawType)
+        typeName=string.gsub(typeName,"^Enum%.AvatarAssetType%.","")
+    end
+    local slot=typeName and bundleTypeToSlot[typeName]
+    if slot then return slot end
+    if rawType~=nil and typeName~="" then return nil end
+    -- Fallback only if metadata omitted, not for random non-animation assets.
+    local n=string.lower(tostring(asset.Name or asset.name or ""))
+    if string.find(n,"run",1,true) then return "run" end
+    if string.find(n,"walk",1,true) then return "walk" end
+    if string.find(n,"jump",1,true) then return "jump" end
+    if string.find(n,"fall",1,true) then return "fall" end
+    if string.find(n,"climb",1,true) then return "climb" end
+    if string.find(n,"swim",1,true) then return "swim" end
+    if string.find(n,"idle",1,true) then return "idle1" end
+    return nil
+end
 local function resolveBundlePack(pack)
     if pack.clips then return true end
-    if not pack.bundleId then return false end
     local bundleId=tonumber(pack.bundleId)
-    local details=guarded(function()
+    if not bundleId then return false end
+    local a=guarded(function()
         return AvatarEditorService:GetItemDetailsAsync(bundleId,Enum.AvatarItemType.Bundle)
     end)
-    local bundledItems=details and (details.BundledItems or details.Items)
-    if type(bundledItems)~="table" or #bundledItems==0 then
-        details=guarded(function() return AssetService:GetBundleDetailsAsync(bundleId) end)
-        bundledItems=details and (details.Items or details.BundledItems)
+    local list=a and (a.BundledItems or a.Items)
+    if type(list)~="table" or #list==0 then
+        local b=guarded(function() return AssetService:GetBundleDetailsAsync(bundleId) end)
+        list=b and (b.Items or b.BundledItems)
     end
-    if type(bundledItems)~="table" then return false end
-    local byType={
-        RunAnimation="run",WalkAnimation="walk",
-        JumpAnimation="jump",FallAnimation="fall",
-        ClimbAnimation="climb",SwimAnimation="swim",
-        IdleAnimation="idle1"
-    }
+    if type(list)~="table" or #list==0 then
+        say("Roblox didn't provide bundle assets for: "..pack.name)
+        return false
+    end
     local clips={}
-    local found=0
-    for _,asset in ipairs(bundledItems) do
-        local typeKey=tostring(asset.AssetType or asset.assetType or "")
-        local slot=byType[typeKey]
+    local seen=0
+    for _,asset in ipairs(list) do
         local id=tonumber(asset.Id or asset.id)
-        if slot and id and id>0 then
+        local slot=getAssetSlot(asset)
+        if id and id>0 and slot then
             if slot=="idle1" and clips.idle1 then slot="idle2" end
             if slot=="swim" and clips.swim then slot="swimidle" end
             if not clips[slot] then
                 clips[slot]=id
-                found=found+1
+                seen=seen+1
             end
         end
     end
-    if found<3 then return false end
-    -- Some animation bundles only include one idle and one swim clip.
+    if seen<3 then
+        say(string.format("Found only %d locomotion clips in %s.",seen,pack.name))
+        return false
+    end
     clips.idle2=clips.idle2 or clips.idle1
     clips.swimidle=clips.swimidle or clips.swim
     pack.clips=clips
     return true
 end
+
 local function loadSelectedPack(pack)
+    if appliedCatalogHumanoid and not restoreCatalogDescription() then
+        say("Could not restore previous catalog pack.")
+        return false
+    end
     killMovement()
     local _,hum,animator=getRig()
     if not hum then say("R15 + server Animator required.");return false end
@@ -605,15 +673,67 @@ local function loadSelectedPack(pack)
     say("Pack selected: "..pack.name.." | Preview in movement")
     return true
 end
+local function applyCatalogPack(pack)
+    local char,hum=getRig()
+    if not hum then
+        say("R15 + Animator required.")
+        return false
+    end
+    -- Avatar bundle item IDs are normally applied through a HumanoidDescription.
+    -- They can fail when fed directly into Animator:LoadAnimation.
+    local original=originalCatalogDescriptions[hum]
+    if not original then
+        original=guarded(function() return hum:GetAppliedDescription() end)
+        if not original then
+            say("This game doesn't allow reading your avatar description.")
+            return false
+        end
+        originalCatalogDescriptions[hum]=original
+    end
+    local current=guarded(function() return hum:GetAppliedDescription() end)
+    if not current then
+        say("Cannot read current avatar description.")
+        return false
+    end
+    local changed=0
+    for slot,property in pairs(descriptionSlots) do
+        local id=pack.clips[slot]
+        if id and id>0 then
+            current[property]=id
+            changed=changed+1
+        end
+    end
+    if changed<3 then
+        current:Destroy()
+        say("This bundle doesn't contain enough R15 movement clips.")
+        return false
+    end
+    say("Applying "..pack.name.." via avatar animations...")
+    local ok,err=pcall(function() hum:ApplyDescriptionAsync(current) end)
+    current:Destroy()
+    if not ok then
+        warn("[Reyzn X Emotes] ApplyDescription failed:",err)
+        say("Roblox blocked applying this pack. See console for details.")
+        return false
+    end
+    killMovement()
+    selectedPack=pack
+    appliedCatalogHumanoid=hum
+    say("Applied "..pack.name.." via avatar system. FE may vary.")
+    return true
+end
 local function activatePack(pack)
-    if pack.bundleId and not pack.clips then
-        say("Resolving bundle: "..pack.name.."...")
+    if not pack.bundleId then
+        loadSelectedPack(pack)
+        return
+    end
+    if not pack.clips then
+        say("Reading bundle clips: "..pack.name)
         if not resolveBundlePack(pack) then
-            say("Bundle clips unavailable or unsupported: "..pack.name)
             return
         end
     end
-    loadSelectedPack(pack)
+    applyCatalogPack(pack)
 end
 
 local function selectPose(pose,multiplier)
@@ -694,7 +814,15 @@ trackConnection(player.CharacterAdded,function(char)
         if player.Character==char and autoApply and selectedPack then
             -- selectedPack survives killMovement; relink on respawn.
             task.wait(0.4)
-            if running and player.Character==char then loadSelectedPack(selectedPack) end
+            if running and player.Character==char then
+                if selectedPack.bundleId then
+                    -- Apply the catalog bundle to the newly spawned Humanoid.
+                    appliedCatalogHumanoid=nil
+                    activatePack(selectedPack)
+                else
+                    loadSelectedPack(selectedPack)
+                end
+            end
         end
     end)
 end)
@@ -1038,7 +1166,8 @@ render=function()
         settingLine("Remove movement pack",2,function()
             selectedPack=nil
             killMovement()
-            say("Default character movement restored.")
+            local restored=restoreCatalogDescription()
+            say(restored and "Default character movement restored." or "Restore failed; see console.")
         end)
         settingLine("Auto-apply on respawn: "..(autoApply and "ON" or "OFF"),3,function()
             autoApply=not autoApply
