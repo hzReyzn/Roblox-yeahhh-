@@ -1,5 +1,5 @@
 --[[
- Reyzn X Emotes v1.5 | standalone universal R15 emote & animation browser
+ Reyzn X Emotes v1.5.1 | standalone universal R15 emote & animation browser
  Built from scratch. Inspired by standard emote catalog and Animator techniques.
  Designed for desktop + mobile. No purchase/access-control bypass.
  FE note: only animations that Roblox successfully loads on a SERVER-CREATED
@@ -1032,8 +1032,8 @@ end
 
 local header=new("Frame",root,{BackgroundTransparency=1,Size=UDim2.new(1,0,0,66)})
 text(header,"REYZN X",16,9,150,29,21,true,palette.white)
-text(header,"EMOTES",122,9,115,29,21,true,palette.purple)
-text(header,"Universal R15  /  Emotes + Animation Packs",17,38,475,18,11,false,palette.muted)
+text(header,"FE EMOTES",122,9,175,29,21,true,palette.purple)
+text(header,"Universal R15  /  FE Emotes + Animations",17,38,475,18,11,false,palette.muted)
 local minimize=button(header,"−",548,14,30,30,false)
 local close=button(header,"×",586,14,30,30,false)
 local bar=new("Frame",root,{Position=UDim2.fromOffset(0,66),
@@ -1046,7 +1046,8 @@ local body=new("Frame",root,{Position=UDim2.fromOffset(164,79),
 round(body,11)
 local tabs={}
 for i,name in ipairs({"Emotes","Packs","Favorites","Settings"}) do
-    tabs[name]=button(sidebar,name,9,10+(i-1)*51,123,40,false)
+    local displayName = name=="Emotes" and "FE Emotes" or (name=="Packs" and "Animations" or name)
+    tabs[name]=button(sidebar,displayName,9,10+(i-1)*51,123,40,false)
     trackConnection(tabs[name].MouseButton1Click,function()
         currentTab=name
         searchTerm="";localPage=1
@@ -1065,7 +1066,7 @@ searchBox=new("TextBox",body,{
 })
 new("UIPadding",searchBox,{PaddingLeft=UDim.new(0,11)})
 round(searchBox,8)
-local searchCatalog=button(body,"Load 240 Emotes",299,11,140,37,true)
+local searchCatalog=button(body,"Load more",299,11,140,37,true)
 local list=new("ScrollingFrame",body,{
     Position=UDim2.fromOffset(12,60),Size=UDim2.fromOffset(427,216),
     BackgroundTransparency=1,BorderSizePixel=0,ScrollBarThickness=3,
@@ -1200,7 +1201,7 @@ render=function()
     end
     searchBox.Visible=currentTab~="Settings"
     searchCatalog.Visible=currentTab=="Emotes" or currentTab=="Packs"
-    searchCatalog.Text=currentTab=="Emotes" and "Load 240 Emotes" or "Find 120 Packs"
+    searchCatalog.Text="Load more"
     prev.Visible=currentTab~="Settings"
     next.Visible=currentTab~="Settings"
     if currentTab=="Settings" then
