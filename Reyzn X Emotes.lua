@@ -1,5 +1,5 @@
 --[[
- Reyzn X Emotes v1.1 | standalone universal R15 emote & animation browser
+ Reyzn X Emotes v1.2 | standalone universal R15 emote & animation browser
  Built from scratch. Inspired by standard emote catalog and Animator techniques.
  Designed for desktop + mobile. No purchase/access-control bypass.
  FE note: only animations that Roblox successfully loads on a SERVER-CREATED
@@ -10,6 +10,7 @@ local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local AvatarEditorService = game:GetService("AvatarEditorService")
+local AssetService = game:GetService("AssetService")
 local HttpService = game:GetService("HttpService")
 local CoreGui = game:GetService("CoreGui")
 local player = Players.LocalPlayer
@@ -47,6 +48,7 @@ end
 
 local packList, emoteList={},{}
 local packIds, emoteIds={},{}
+local packBundleIds={}
 local favorites={}
 local selectedPack=nil
 local movementTracks={}
@@ -64,10 +66,12 @@ local searchTerm=""
 local currentTab="Emotes"
 local localPage=1
 local pageSize=22
-local catalogPages=nil
+-- Independent cursors prevent emote searches and movement-pack searches from clashing.
+local catalogSessions = {
+    Emotes={pages=nil,keyword=nil,finished=false},
+    Packs={pages=nil,keyword=nil,finished=false},
+}
 local catalogBusy=false
-local catalogKeyword=nil
-local catalogExhausted=false
 local statusText
 local searchBox
 local render
@@ -86,10 +90,17 @@ local function addEmote(name,id,kind,customAnimId)
     })
     return true
 end
-local function addPack(name,clips)
-    if packIds[name] then return end
+local function addPack(name,clips,bundleId)
+    name=tostring(name)
+    if packIds[name] or (bundleId and packBundleIds[bundleId]) then return false end
     packIds[name]=true
-    table.insert(packList,{kind="Pack",id=name,name=name,clips=clips,origin="R15 Pack"})
+    if bundleId then packBundleIds[bundleId]=true end
+    local entry={
+        kind="Pack", id=bundleId or name, name=name, clips=clips,
+        bundleId=bundleId, origin=bundleId and "Avatar Catalog Bundle" or "R15 Pack"
+    }
+    table.insert(packList,entry)
+    return true
 end
 local emoteDefaults={
     {"Hello",3576686446},
@@ -520,6 +531,50 @@ local jumpHoldUntil=0
 local idleSwitchAt=0
 local idleVariant="idle1"
 local lastUpdate=0
+-- Discover modern UGC + official R15 animation bundles without hardcoded IDs.
+-- Bundle search results contain bundle IDs, NOT playable animation IDs.
+-- Resolve each bundle to its animation assets only when it is selected.
+local function resolveBundlePack(pack)
+    if pack.clips then return true end
+    if not pack.bundleId then return false end
+    local bundleId=tonumber(pack.bundleId)
+    local details=guarded(function()
+        return AvatarEditorService:GetItemDetailsAsync(bundleId,Enum.AvatarItemType.Bundle)
+    end)
+    local bundledItems=details and (details.BundledItems or details.Items)
+    if type(bundledItems)~="table" or #bundledItems==0 then
+        details=guarded(function() return AssetService:GetBundleDetailsAsync(bundleId) end)
+        bundledItems=details and (details.Items or details.BundledItems)
+    end
+    if type(bundledItems)~="table" then return false end
+    local byType={
+        RunAnimation="run",WalkAnimation="walk",
+        JumpAnimation="jump",FallAnimation="fall",
+        ClimbAnimation="climb",SwimAnimation="swim",
+        IdleAnimation="idle1"
+    }
+    local clips={}
+    local found=0
+    for _,asset in ipairs(bundledItems) do
+        local typeKey=tostring(asset.AssetType or asset.assetType or "")
+        local slot=byType[typeKey]
+        local id=tonumber(asset.Id or asset.id)
+        if slot and id and id>0 then
+            if slot=="idle1" and clips.idle1 then slot="idle2" end
+            if slot=="swim" and clips.swim then slot="swimidle" end
+            if not clips[slot] then
+                clips[slot]=id
+                found=found+1
+            end
+        end
+    end
+    if found<3 then return false end
+    -- Some animation bundles only include one idle and one swim clip.
+    clips.idle2=clips.idle2 or clips.idle1
+    clips.swimidle=clips.swimidle or clips.swim
+    pack.clips=clips
+    return true
+end
 local function loadSelectedPack(pack)
     killMovement()
     local _,hum,animator=getRig()
@@ -550,6 +605,17 @@ local function loadSelectedPack(pack)
     say("Pack selected: "..pack.name.." | Preview in movement")
     return true
 end
+local function activatePack(pack)
+    if pack.bundleId and not pack.clips then
+        say("Resolving bundle: "..pack.name.."...")
+        if not resolveBundlePack(pack) then
+            say("Bundle clips unavailable or unsupported: "..pack.name)
+            return
+        end
+    end
+    loadSelectedPack(pack)
+end
+
 local function selectPose(pose,multiplier)
     if pose==currentMovement then
         local t=pose and movementTracks[pose]
@@ -635,47 +701,90 @@ end)
 
 -- Marketplace results are listed even when a player does not own them.
 -- Browsing does not grant animation permissions.
-local function mergeCatalogPage(pages)
+-- Search emotes and ANIMATION BUNDLES separately. Roblox limits catalog
+-- results to 120 per API page, so an Emotes click consumes two pages = 240.
+local function mergeCatalogPage(pages,tab)
     local ok,items=pcall(function() return pages:GetCurrentPage() end)
-    if not ok or type(items)~="table" then return 0 end
+    if not ok or type(items)~="table" then return 0,0 end
     local added=0
     for _,data in ipairs(items) do
         local id=tonumber(data.Id or data.id)
         local name=data.Name or data.name
-        if id and name and addEmote(name,id,"Roblox Catalog") then added=added+1 end
+        if id and name then
+            if tab=="Emotes" then
+                if addEmote(name,id,"Roblox Catalog") then added=added+1 end
+            elseif tab=="Packs" and (data.ItemType=="Bundle" or data.BundleType=="Animations") then
+                if addPack(name,nil,id) then
+                    added=added+1
+                end
+            end
+        end
     end
-    catalogExhausted=pages.IsFinished
-    return added
+    return added,#items
 end
-local function catalogQuery(keyword,more)
-    if catalogBusy then say("Catalog request in progress."); return end
-    if more and (not catalogPages or catalogExhausted) then
-        say("No more catalog pages."); return
+
+local function catalogQuery(keyword)
+    local tab=currentTab
+    if tab~="Emotes" and tab~="Packs" then return end
+    if catalogBusy then say("Catalog request already running.");return end
+    local session=catalogSessions[tab]
+    keyword=keyword or ""
+    if session.keyword==keyword and session.pages and session.finished then
+        say("All available pages loaded for this search.")
+        return
     end
+    local continuing=session.pages and session.keyword==keyword and not session.finished
     catalogBusy=true
-    say("Searching official Roblox catalog...")
+    say((tab=="Emotes" and "Loading up to 240 emotes..." or "Finding up to 120 R15 bundles..."))
     task.spawn(function()
-        local ok,pages
-        if more then
-            pages=catalogPages
+        local pages
+        local ok=true
+        if continuing then
+            pages=session.pages
             ok=pcall(function() pages:AdvanceToNextPageAsync() end)
         else
             local params=CatalogSearchParams.new()
-            params.AssetTypes={Enum.AvatarAssetType.EmoteAnimation}
             params.IncludeOffSale=true
-            params.Limit=120
             params.SortType=Enum.CatalogSortType.RecentlyCreated
-            params.SearchKeyword=keyword or ""
+            params.SearchKeyword=keyword
+            params.Limit=120 -- hard maximum supported by Roblox
+            if tab=="Emotes" then
+                params.AssetTypes={Enum.AvatarAssetType.EmoteAnimation}
+            else
+                params.BundleTypes={Enum.BundleType.Animations}
+            end
             ok,pages=pcall(function()
                 return AvatarEditorService:SearchCatalogAsync(params)
             end)
+            if ok and pages then
+                session.pages=pages
+                session.keyword=keyword
+                session.finished=false
+            end
         end
+        local added,received=0,0
         if ok and pages then
-            if not more then catalogPages=pages;catalogKeyword=keyword or "" end
-            local added=mergeCatalogPage(pages)
-            say("Catalog loaded: +"..added.." | restricted emotes may not play.")
+            local pageCount=(tab=="Emotes") and 2 or 1
+            for i=1,pageCount do
+                local count,raw=mergeCatalogPage(pages,tab)
+                added=added+count
+                received=received+raw
+                session.finished=pages.IsFinished
+                if session.finished then break end
+                if i<pageCount then
+                    local advanced=pcall(function()
+                        pages:AdvanceToNextPageAsync()
+                    end)
+                    if not advanced then
+                        ok=false
+                        break
+                    end
+                end
+            end
+            say(string.format("%s: %d catalog results / +%d new.%s",
+                tab,received,added,ok and "" or " Next page failed."))
         else
-            say("Catalog blocked/unavailable. Built-in library still works.")
+            say("Catalog access blocked here; precached items still work.")
         end
         catalogBusy=false
         if running and render then render() end
@@ -782,7 +891,7 @@ searchBox=new("TextBox",body,{
 })
 new("UIPadding",searchBox,{PaddingLeft=UDim.new(0,11)})
 round(searchBox,8)
-local searchCatalog=button(body,"Catalog +120",299,11,140,37,true)
+local searchCatalog=button(body,"Load 240 Emotes",299,11,140,37,true)
 local list=new("ScrollingFrame",body,{
     Position=UDim2.fromOffset(12,60),Size=UDim2.fromOffset(427,216),
     BackgroundTransparency=1,BorderSizePixel=0,ScrollBarThickness=3,
@@ -862,7 +971,7 @@ local function listItem(item,index)
     local b=button(frame,item.kind=="Pack" and "APPLY" or "PLAY",286,9,76,33,true)
     trackConnection(b.MouseButton1Click,function()
         if item.kind=="Pack" then
-            loadSelectedPack(item)
+            task.spawn(function() activatePack(item) end)
         else
             task.spawn(function() playEmote(item) end)
         end
@@ -916,8 +1025,8 @@ render=function()
         b.BackgroundColor3=name==currentTab and Color3.fromRGB(94,51,151) or palette.row
     end
     searchBox.Visible=currentTab~="Settings"
-    searchCatalog.Visible=currentTab=="Emotes"
-    searchCatalog.Text=(catalogPages and catalogKeyword==searchTerm and not catalogExhausted) and "Load Next +120" or "Catalog +120"
+    searchCatalog.Visible=currentTab=="Emotes" or currentTab=="Packs"
+    searchCatalog.Text=currentTab=="Emotes" and "Load 240 Emotes" or "Find 120 Packs"
     prev.Visible=currentTab~="Settings"
     next.Visible=currentTab~="Settings"
     if currentTab=="Settings" then
@@ -973,12 +1082,7 @@ trackConnection(searchBox:GetPropertyChangedSignal("Text"),function()
 end)
 trackConnection(searchCatalog.MouseButton1Click,function()
     if catalogBusy then return end
-    local query=searchTerm
-    if catalogPages and catalogKeyword==query and not catalogExhausted then
-        catalogQuery(query,true)
-    else
-        catalogQuery(query,false)
-    end
+    catalogQuery(searchTerm)
 end)
 trackConnection(prev.MouseButton1Click,function()
     localPage=math.max(1,localPage-1)
@@ -992,6 +1096,6 @@ render()
 if not getRig() then
     say("R15 + server-created Animator required.")
 else
-    say("Ready • Emotes: owned/allowed only • FE may vary by game")
+    say("Ready • FE depends on Roblox/game permissions")
 end
 -- Catalog browsing is on-demand to avoid infinite loading or startup stalls.
