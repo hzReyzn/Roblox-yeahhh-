@@ -1,5 +1,5 @@
 --[[
- Reyzn X Emotes v1.4 | standalone universal R15 emote & animation browser
+ Reyzn X Emotes v1.5 | standalone universal R15 emote & animation browser
  Built from scratch. Inspired by standard emote catalog and Animator techniques.
  Designed for desktop + mobile. No purchase/access-control bypass.
  FE note: only animations that Roblox successfully loads on a SERVER-CREATED
@@ -49,6 +49,8 @@ end
 local packList, emoteList={},{}
 local packIds, emoteIds={},{}
 local packBundleIds={}
+local catalogAnimationIds={}
+local packRequestGeneration=0
 local favorites={}
 local selectedPack=nil
 local movementTracks={}
@@ -90,14 +92,15 @@ local function addEmote(name,id,kind,customAnimId)
     })
     return true
 end
-local function addPack(name,clips,bundleId)
+local function addPack(name,clips,bundleId,catalogAssets)
     name=tostring(name)
     if packIds[name] or (bundleId and packBundleIds[bundleId]) then return false end
     packIds[name]=true
     if bundleId then packBundleIds[bundleId]=true end
     local entry={
         kind="Pack", id=bundleId or name, name=name, clips=clips,
-        bundleId=bundleId, origin=bundleId and "Avatar Catalog Bundle" or "R15 Pack"
+        bundleId=bundleId, catalogAssets=catalogAssets or false,
+        origin=bundleId and "Avatar Catalog Bundle" or (catalogAssets and "Catalog Clips (FLY method)" or "R15 Pack")
     }
     table.insert(packList,entry)
     return true
@@ -414,6 +417,14 @@ addPack("Bold",{
     idle1=16738333868,idle2=16738334710,fall=16738333171,
     swim=16738339158,swimidle=16738339817,climb=16738332169
 })
+-- Reference test: these are the same SSJ3 catalog package asset IDs
+-- used in FLY-SSJ3; they are NOT direct animation content IDs.
+-- Resolve them only when this pack is selected, just like FLY.
+addPack("SSJ3 Goku DBZ (FLY)",{
+    idle1=102994438121065, idle2=102994438121065,
+    walk=107411587365865, run=107411587365865,
+    climb=82749924026067, fall=138553022046795
+},nil,true)
 table.sort(packList,function(a,b) return a.name<b.name end)
 
 local function saveFavorites()
@@ -457,6 +468,7 @@ local function killMovement()
     currentAnimator=nil
 end
 local function stopEverything()
+    packRequestGeneration=packRequestGeneration+1
     stopCurrentEmote()
     killMovement()
     selectedPack=nil
@@ -613,8 +625,80 @@ local function resolveBundlePack(pack)
     return true
 end
 
-local function loadSelectedPack(pack)
-    if type(pack.clips) ~= "table" then
+-- Same package-to-content resolution used in the user's FLY-SSJ3.
+-- An Avatar Catalog package asset can contain an Animation instance
+-- pointing to a DIFFERENT animation content ID. The package ID is not
+-- necessarily accepted by Animator:LoadAnimation.
+local function resolveCatalogAnimation(assetId)
+    assetId=tonumber(assetId)
+    if not assetId or assetId<1 then return nil end
+    if catalogAnimationIds[assetId] then return catalogAnimationIds[assetId] end
+    local ok,objects=pcall(function()
+        return game:GetObjects("rbxassetid://"..tostring(assetId))
+    end)
+    if not ok or type(objects)~="table" then return nil end
+    local resolvedId
+    local function inspect(object)
+        if resolvedId or not object:IsA("Animation") then return end
+        local animationId=tostring(object.AnimationId or "")
+        local contentId=animationId:match("^rbxassetid://(%d+)$")
+            or animationId:match("[?&]id=(%d+)")
+            or animationId:match("^(%d+)$")
+        local number=tonumber(contentId)
+        if number and number>0 and number~=assetId then
+            resolvedId=number
+        end
+    end
+    for _,object in ipairs(objects) do
+        pcall(function()
+            inspect(object)
+            for _,child in ipairs(object:GetDescendants()) do inspect(child) end
+        end)
+        pcall(function() object:Destroy() end)
+    end
+    if resolvedId then catalogAnimationIds[assetId]=resolvedId end
+    return resolvedId
+end
+
+local function resolveCatalogMovementClips(pack,request)
+    if pack.playableClips then return pack.playableClips end
+    local original=pack.clips
+    if type(original)~="table" then return nil end
+    local resolved,attempted,successful,total={},{},0,0
+    for _,slot in ipairs({"idle1","idle2","walk","run","jump","fall","climb","swim","swimidle"}) do
+        local assetId=original[slot]
+        if assetId then
+            total=total+1
+            say("Resolving "..pack.name..": "..total.." catalog clips checked...")
+            local clipId=attempted[assetId]
+            if clipId==nil then
+                clipId=resolveCatalogAnimation(assetId) or false
+                attempted[assetId]=clipId
+            end
+            if not running or request~=packRequestGeneration then return nil end
+            if clipId then
+                resolved[slot]=clipId
+                successful=successful+1
+            end
+        end
+    end
+    if successful==0 then
+        warn("[Reyzn X Emotes] No actual AnimationIds extracted from "..pack.name..
+            ". GetObjects may be blocked, or package assets are not loadable.")
+        say("No playable clip IDs extracted: "..pack.name.." (FLY method unavailable).")
+        return nil
+    end
+    resolved.idle2=resolved.idle2 or resolved.idle1
+    resolved.swimidle=resolved.swimidle or resolved.swim
+    pack.playableClips=resolved
+    pack.resolvedCount=successful
+    pack.originalClipCount=total
+    return resolved
+end
+
+local function loadSelectedPack(pack,clips)
+    clips=clips or pack.clips
+    if type(clips) ~= "table" then
         say("This pack has no playable animation IDs.")
         return false
     end
@@ -623,14 +707,18 @@ local function loadSelectedPack(pack)
     if not hum then say("R15 + server Animator required.");return false end
     currentHumanoid=hum
     currentAnimator=animator
-    for key,id in pairs(pack.clips) do
+    for key,id in pairs(clips) do
         local animation=Instance.new("Animation")
         animation.Name="RZX_"..key
         animation.AnimationId="rbxassetid://"..tostring(id)
         table.insert(movementAnimations,animation)
         local ok,t=pcall(function() return animator:LoadAnimation(animation) end)
         if ok and t then
-            t.Priority=(key=="idle1" or key=="idle2") and Enum.AnimationPriority.Idle or Enum.AnimationPriority.Movement
+            -- FLY-SSJ3 uses Action priority for its catalog tracks.
+            t.Priority=(pack.bundleId or pack.catalogAssets)
+                and Enum.AnimationPriority.Action
+                or ((key=="idle1" or key=="idle2")
+                    and Enum.AnimationPriority.Idle or Enum.AnimationPriority.Movement)
             t.Looped=(key~="jump")
             movementTracks[key]=t
         end
@@ -644,11 +732,16 @@ local function loadSelectedPack(pack)
     jumpHoldUntil=0
     idleVariant="idle1"
     idleSwitchAt=os.clock()+8
-    say("Pack selected: "..pack.name.." | Preview in movement")
+    if pack.bundleId or pack.catalogAssets then
+        say(string.format("Resolved %d/%d package slots • %s",
+            pack.resolvedCount or 0,pack.originalClipCount or 0,pack.name))
+    else
+        say("Pack selected: "..pack.name.." | Preview in movement")
+    end
     -- Loading an AnimationTrack does not guarantee that Roblox can download
     -- the clip. Check Length after a short delay and report blocked assets.
-    if pack.bundleId then
-        task.delay(4,function()
+    if pack.bundleId or pack.catalogAssets then
+        task.delay(8,function()
             if not running or selectedPack~=pack or currentAnimator~=animator then return end
             local playable,total=0,0
             for _,t in pairs(movementTracks) do
@@ -657,32 +750,39 @@ local function loadSelectedPack(pack)
                 if length and length>0 then playable=playable+1 end
             end
             if playable==0 then
-                warn("[Reyzn X Emotes] None of the bundle clips loaded. Animation asset permissions may block this bundle.")
-                say("This bundle's clips are unavailable or restricted in this game.")
+                warn("[Reyzn X Emotes] Catalog clips resolved, but no tracks report usable content. Roblox asset permissions may still block them.")
+                say("No tracks ready: "..pack.name.." (check Roblox asset permissions).")
             elseif playable<total then
-                say(string.format("%s: %d/%d clips loaded (some restricted).",pack.name,playable,total))
+                say(string.format("%s: %d/%d tracks ready • try moving to load others.",pack.name,playable,total))
             else
-                say("Movement pack loaded: "..pack.name.." | FE depends on game.")
+                say("Movement pack ready: "..pack.name.." | FE depends on game.")
             end
         end)
     end
     return true
 end
--- Catalog animation bundle assets are resolved to their movement clip IDs
--- and loaded through the same client Animator path as built-in packs.
--- Humanoid:ApplyDescriptionAsync is server-only, so never call it here.
+-- Resolve catalog package IDs into inner AnimationIds before loading.
+-- Built-in classic packs already contain direct sequence IDs and are unchanged.
 local function activatePack(pack)
-    if not pack.bundleId then
-        loadSelectedPack(pack)
-        return
-    end
-    if not pack.clips then
+    packRequestGeneration=packRequestGeneration+1
+    local request=packRequestGeneration
+    local char,hum,animator=getRig()
+    if not hum then say("R15 + server Animator required.");return end
+    if pack.bundleId and not pack.clips then
         say("Reading bundle clips: "..pack.name)
-        if not resolveBundlePack(pack) then
-            return
-        end
+        if not resolveBundlePack(pack) then return end
     end
-    loadSelectedPack(pack)
+    if not running or request~=packRequestGeneration then return end
+    local clips=pack.clips
+    if pack.bundleId or pack.catalogAssets then
+        say("Extracting real AnimationIds from "..pack.name.."...")
+        clips=resolveCatalogMovementClips(pack,request)
+        if not clips then return end
+    end
+    local liveChar,liveHum,liveAnimator=getRig()
+    if not running or request~=packRequestGeneration
+        or liveChar~=char or liveHum~=hum or liveAnimator~=animator then return end
+    loadSelectedPack(pack,clips)
 end
 
 local function selectPose(pose,multiplier)
@@ -747,7 +847,10 @@ local function updateMovement()
         end
     end
     if pose and not movementTracks[pose] then
-        pose=movementTracks.idle1 and "idle1" or nil
+        if pose=="walk" and movementTracks.run then pose="run"
+        elseif pose=="run" and movementTracks.walk then pose="walk"
+        elseif pose=="swimidle" and movementTracks.swim then pose="swim"
+        else pose=movementTracks.idle1 and "idle1" or nil end
     end
     selectPose(pose,speed)
 end
