@@ -1,5 +1,5 @@
 --[[
- Reyzn X Emotes v1.5.1 | standalone universal R15 emote & animation browser
+ Reyzn X Emotes v1.9-emote-priority-test | standalone universal R15 emote & animation browser
  Built from scratch. Inspired by standard emote catalog and Animator techniques.
  Designed for desktop + mobile. No purchase/access-control bypass.
  FE note: only animations that Roblox successfully loads on a SERVER-CREATED
@@ -51,6 +51,70 @@ local packIds, emoteIds={},{}
 local packBundleIds={}
 local catalogAnimationIds={}
 local packRequestGeneration=0
+-- Persistent animation-ID cache. Stores only catalog asset ID -> animation content ID.
+-- Optional: executors without file APIs continue using the in-memory cache.
+-- Reading and writing are protected so a damaged file never blocks startup.
+local catalogCacheFile="ReyznXEmotes_animation_ids_v1.json"
+local catalogCacheDirty=false
+local catalogCacheSaving=false
+local restoredCatalogIds=0
+local function validCacheId(n)
+    return type(n)=="number" and n>0 and n<9007199254740992 and n%1==0
+end
+do
+    if type(readfile)=="function" then
+        local ok,raw=pcall(function()
+            if type(isfile)=="function" and not isfile(catalogCacheFile) then return nil end
+            return readfile(catalogCacheFile)
+        end)
+        if ok and type(raw)=="string" and #raw<250000 then
+            local parsedOk,parsed=pcall(function() return HttpService:JSONDecode(raw) end)
+            if parsedOk and type(parsed)=="table"
+                and parsed.version==1 and type(parsed.assets)=="table" then
+                for assetKey,contentValue in pairs(parsed.assets) do
+                    local assetId=tonumber(assetKey)
+                    local contentId=tonumber(contentValue)
+                    if validCacheId(assetId) and validCacheId(contentId)
+                        and assetId~=contentId then
+                        catalogAnimationIds[assetId]=contentId
+                        restoredCatalogIds=restoredCatalogIds+1
+                    end
+                end
+            end
+        end
+    end
+end
+
+local function queueCatalogCacheSave()
+    if type(writefile)~="function" or catalogCacheSaving then return end
+    catalogCacheSaving=true
+    task.spawn(function()
+        -- Write outside the animation-loading callback, after the batch settles.
+        task.wait(0.35)
+        while catalogCacheDirty do
+            catalogCacheDirty=false
+            local assets={}
+            for assetId,contentId in pairs(catalogAnimationIds) do
+                if validCacheId(assetId) and validCacheId(contentId)
+                    and assetId~=contentId then
+                    assets[tostring(assetId)]=contentId
+                end
+            end
+            local ok,err=pcall(function()
+                writefile(catalogCacheFile,HttpService:JSONEncode({
+                    version=1,assets=assets
+                }))
+            end)
+            if not ok then
+                warn("[Reyzn X Emotes] Couldn't save animation cache: "..tostring(err))
+                break
+            end
+            if catalogCacheDirty then task.wait(0.2) end
+        end
+        catalogCacheSaving=false
+    end)
+end
+
 local favorites={}
 local selectedPack=nil
 local movementTracks={}
@@ -442,9 +506,144 @@ if type(isfile)=="function" and type(readfile)=="function" then
         end
     end)
 end
+-- Eight independently draggable on-screen emote shortcuts.
+-- Files are optional; when unavailable the bindings last for this session.
+local fastKeyFile="ReyznXEmotes_fastkeys_v1.json"
+local FAST_KEY_COUNT=8 -- backwards-compatible with saved F1-F5
+local fastKeyBindings={}
+local fastKeyPositions={}
+local fastKeyButtons={}
+local function validFastKeyId(id)
+    return type(id)=="number" and id>0 and id<9007199254740992
+        and id%1==0
+end
+do
+    if type(readfile)=="function" then
+        local ok,raw=pcall(function()
+            if type(isfile)=="function" and not isfile(fastKeyFile) then return nil end
+            return readfile(fastKeyFile)
+        end)
+        if ok and type(raw)=="string" and #raw<16000 then
+            local decodedOk,data=pcall(function() return HttpService:JSONDecode(raw) end)
+            if decodedOk and type(data)=="table" and data.version==1 then
+                for i=1,FAST_KEY_COUNT do
+                    local entry=type(data.slots)=="table" and data.slots[tostring(i)]
+                    if type(entry)=="table" and validFastKeyId(entry.id) then
+                        local fallback=entry.fallback
+                        if not validFastKeyId(fallback) then fallback=nil end
+                        fastKeyBindings[i]={
+                            kind="Emote",
+                            id=entry.id,
+                            name=type(entry.name)=="string"
+                                and string.sub(entry.name,1,90) or ("Emote "..tostring(entry.id)),
+                            fallback=fallback
+                        }
+                    end
+                    local position=type(data.positions)=="table"
+                        and data.positions[tostring(i)]
+                    if type(position)=="table" and type(position.x)=="number"
+                        and type(position.y)=="number"
+                        and position.x>=0 and position.x<=1
+                        and position.y>=0 and position.y<=1 then
+                        fastKeyPositions[i]={x=position.x,y=position.y}
+                    end
+                end
+            end
+        end
+    end
+end
+local function saveFastKeys()
+    if type(writefile)~="function" then return end
+    local slots,positions={},{}
+    for i=1,FAST_KEY_COUNT do
+        local entry=fastKeyBindings[i]
+        if entry then
+            slots[tostring(i)]={
+                id=entry.id,name=entry.name,fallback=entry.fallback
+            }
+        end
+        if fastKeyPositions[i] then
+            positions[tostring(i)]=fastKeyPositions[i]
+        end
+    end
+    local ok,err=pcall(function()
+        writefile(fastKeyFile,HttpService:JSONEncode({
+            version=1,slots=slots,positions=positions
+        }))
+    end)
+    if not ok then
+        warn("[Reyzn X Emotes] Could not save FastKeys:",err)
+    end
+end
+local function updateFastKeyButton(i)
+    local visual=fastKeyButtons[i]
+    if not visual then return end
+    local entry=fastKeyBindings[i]
+    visual.name.Text=entry and entry.name or "EMPTY"
+    visual.button.BackgroundColor3=entry
+        and Color3.fromRGB(82,43,140) or Color3.fromRGB(33,29,47)
+end
+local function assignFastKey(i,item)
+    if type(i)~="number" or i<1 or i>FAST_KEY_COUNT or item.kind~="Emote" then return end
+    fastKeyBindings[i]={kind="Emote",id=item.id,name=item.name,fallback=item.fallback}
+    updateFastKeyButton(i)
+    saveFastKeys()
+    say("FastKey "..i.." assigned: "..item.name)
+end
+local function clearFastKey(i)
+    fastKeyBindings[i]=nil
+    updateFastKeyButton(i)
+    saveFastKeys()
+end
+
 local function itemKey(it) return it.kind..":"..tostring(it.id) end
 
+-- Emote / movement-pack coexistence.
+-- Do not destroy or unselect a movement pack while an emote is playing.
+-- Official Roblox emotes can use the server-created Animator, so capture
+-- their Action tracks and restore movement when they stop.
+local emoteGeneration=0
+local emoteMovementPaused=false
+local emoteAnimator=nil
+local emotePlayedConnection=nil
+local emoteStoppedConnection=nil
+
+local function disconnectEmoteListeners()
+    if emotePlayedConnection then
+        emotePlayedConnection:Disconnect()
+        emotePlayedConnection=nil
+    end
+    if emoteStoppedConnection then
+        emoteStoppedConnection:Disconnect()
+        emoteStoppedConnection=nil
+    end
+end
+
+local function finishEmote(token)
+    if token~=emoteGeneration then return end
+    disconnectEmoteListeners()
+    emoteMovementPaused=false
+    emoteAnimator=nil
+    activeEmoteRequested=false
+    -- The next movement heartbeat chooses the correct locomotion pose.
+    -- Resetting currentMovement also forces a replay if the last pose
+    -- had been stopped to give the emote priority.
+    currentMovement=nil
+    if activeEmoteAnimation then
+        if activeEmoteTrack then
+            pcall(function() activeEmoteTrack:Destroy() end)
+        end
+        pcall(function() activeEmoteAnimation:Destroy() end)
+        activeEmoteAnimation=nil
+    end
+    activeEmoteTrack=nil
+end
+
 local function stopCurrentEmote()
+    emoteGeneration=emoteGeneration+1
+    disconnectEmoteListeners()
+    emoteMovementPaused=false
+    emoteAnimator=nil
     if activeEmoteTrack then
         pcall(function() activeEmoteTrack:Stop(0.15) end)
         activeEmoteTrack=nil
@@ -454,7 +653,76 @@ local function stopCurrentEmote()
         activeEmoteAnimation=nil
     end
     activeEmoteRequested=false
+    currentMovement=nil
 end
+
+local function beginEmotePriority(animator)
+    local token=emoteGeneration
+    emoteMovementPaused=true
+    emoteAnimator=animator
+    -- Stop only the custom locomotion tracks. Keep them loaded in memory,
+    -- retain selectedPack, and let updateMovement resume them afterward.
+    for _,track in pairs(movementTracks) do
+        pcall(function()
+            if track.IsPlaying then track:Stop(0.12) end
+        end)
+    end
+    currentMovement=nil
+
+    local alreadyPlaying={}
+    local existing=guarded(function() return animator:GetPlayingAnimationTracks() end)
+    if type(existing)=="table" then
+        for _,track in ipairs(existing) do alreadyPlaying[track]=true end
+    end
+
+    local function captureTrack(track,explicit)
+        if not running or token~=emoteGeneration
+            or emoteAnimator~=animator or activeEmoteTrack then return end
+        if alreadyPlaying[track] and not explicit then return end
+        for _,movementTrack in pairs(movementTracks) do
+            if movementTrack==track then return end
+        end
+        -- Ignore ordinary idle/walk/run tracks fired by Animate.
+        local priority=guarded(function() return track.Priority end)
+        if not explicit and (not priority
+            or priority.Value<Enum.AnimationPriority.Action.Value) then return end
+        activeEmoteTrack=track
+        if emotePlayedConnection then
+            emotePlayedConnection:Disconnect()
+            emotePlayedConnection=nil
+        end
+        emoteStoppedConnection=track.Stopped:Connect(function()
+            -- Small fade buffer before restoring locomotion.
+            task.delay(0.18,function()
+                if running and token==emoteGeneration then finishEmote(token) end
+            end)
+        end)
+    end
+    emotePlayedConnection=animator.AnimationPlayed:Connect(captureTrack)
+
+    return token,captureTrack
+end
+
+-- The official API can yield while Roblox fetches the emote. Start its
+-- no-track timeout AFTER the API returns, so slow network requests never
+-- reactivate locomotion before their emote has begun.
+local function watchOfficialEmote(token,animator,captureTrack)
+    task.delay(1.25,function()
+        if not running or token~=emoteGeneration
+            or not emoteMovementPaused or activeEmoteTrack then return end
+        local found=guarded(function() return animator:GetPlayingAnimationTracks() end)
+        if type(found)=="table" then
+            for _,track in ipairs(found) do
+                captureTrack(track)
+                if activeEmoteTrack then break end
+            end
+        end
+        -- Do not permanently suppress the selected movement pack if Roblox
+        -- did not expose a playable emote track.
+        if not activeEmoteTrack then finishEmote(token) end
+    end)
+end
+
 local function killMovement()
     for _,t in pairs(movementTracks) do
         pcall(function() t:Stop(0.12) end)
@@ -478,60 +746,83 @@ local function playEmote(item)
     local char,hum,animator=getRig()
     if not hum then say("R15 + server Animator required.");return end
     stopCurrentEmote()
-    -- Official emotes must be installed on the character's description.
-    -- Attempt normal Roblox emote playback before a direct Animation fallback.
+    local token,captureTrack=beginEmotePriority(animator)
+    -- Use the original official Roblox playback methods to keep FE behavior.
+    -- The controller only pauses local movement tracks until the emote stops.
     if not item.fallback then
         local description=hum:FindFirstChildOfClass("HumanoidDescription")
         local alias="RZX_"..tostring(item.id)
         if description then
             pcall(function() description:AddEmote(alias,item.id) end)
             local ok,played=pcall(function() return hum:PlayEmoteAsync(alias) end)
+            if token~=emoteGeneration then return end
             if ok and played then
                 activeEmoteRequested=true
-                say("Emote requested: "..item.name.." | FE depends on game")
+                watchOfficialEmote(token,animator,captureTrack)
+                say("Emote requested: "..item.name.." | movement resumes afterward")
                 return
             end
         end
-        -- Some environments expose a Roblox-owned emote playback entry point.
-        -- It is optional and may be blocked. Failure simply falls through.
+        -- Optional Roblox-owned playback entry point; unchanged.
         local ok,trackOrResult=pcall(function()
             return hum:PlayEmoteAndGetAnimTrackById(item.id)
         end)
+        if token~=emoteGeneration then return end
         if ok and trackOrResult then
             if typeof(trackOrResult)=="Instance" and trackOrResult:IsA("AnimationTrack") then
-                activeEmoteTrack=trackOrResult
+                captureTrack(trackOrResult,true)
             end
             activeEmoteRequested=true
-            say("Emote invoked: "..item.name.." | FE unverified")
+            watchOfficialEmote(token,animator,captureTrack)
+            say("Emote invoked: "..item.name.." | movement resumes afterward")
             return
         end
     end
-    -- Fallback: can play an accessible animation SEQUENCE, but does not
-    -- bypass catalog asset permissions and may be invisible to others.
+    -- Accessible sequence fallback, without changing asset permissions.
     local animation=Instance.new("Animation")
     animation.AnimationId="rbxassetid://"..tostring(item.fallback or item.id)
     local ok,track=pcall(function() return animator:LoadAnimation(animation) end)
+    if token~=emoteGeneration then
+        if ok and track then pcall(function() track:Destroy() end) end
+        animation:Destroy()
+        return
+    end
     if not ok or not track then
         animation:Destroy()
+        finishEmote(token)
         say("Unavailable or restricted: "..item.name)
         return
     end
     track.Priority=Enum.AnimationPriority.Action4
     track.Looped=loopEmotes
+    activeEmoteAnimation=animation
     if not pcall(function() track:Play(0.15,1,emoteSpeed) end) then
         pcall(function() track:Destroy() end)
         animation:Destroy()
+        activeEmoteAnimation=nil
+        finishEmote(token)
         say("Failed to play: "..item.name)
         return
     end
-    activeEmoteTrack=track
-    activeEmoteAnimation=animation
-    say("Playing "..item.name.." | Other-player visibility not guaranteed")
+    captureTrack(track)
+    activeEmoteRequested=true
+    say("Playing "..item.name.." | movement resumes afterward")
     task.delay(2,function()
-        if running and activeEmoteTrack==track then
+        if running and token==emoteGeneration and activeEmoteTrack==track then
             local length=guarded(function() return track.Length end)
             if not length or length<=0 then
                 say("Animation may be unavailable / not loaded in this game.")
+            end
+        end
+    end)
+    -- A truly unavailable clip may never emit Stopped. Do not keep
+    -- suppressing the movement pack forever in that case.
+    task.delay(7,function()
+        if running and token==emoteGeneration and activeEmoteTrack==track then
+            local length=guarded(function() return track.Length end)
+            if not length or length<=0 then
+                pcall(function() track:Stop(0.15) end)
+                finishEmote(token)
             end
         end
     end)
@@ -656,7 +947,10 @@ local function resolveCatalogAnimation(assetId)
         end)
         pcall(function() object:Destroy() end)
     end
-    if resolvedId then catalogAnimationIds[assetId]=resolvedId end
+    if resolvedId then
+        catalogAnimationIds[assetId]=resolvedId
+        catalogCacheDirty=true
+    end
     return resolvedId
 end
 
@@ -672,6 +966,13 @@ local function resolveCatalogMovementClips(pack,request)
             say("Resolving "..pack.name..": "..total.." catalog clips checked...")
             local clipId=attempted[assetId]
             if clipId==nil then
+                -- Allow the HUD and game to draw a frame before another
+                -- synchronous GetObjects request. This reduces continuous
+                -- stalls on mobile without changing the working FLY method.
+                if not catalogAnimationIds[assetId] then
+                    task.wait(0.05)
+                    if not running or request~=packRequestGeneration then return nil end
+                end
                 clipId=resolveCatalogAnimation(assetId) or false
                 attempted[assetId]=clipId
             end
@@ -693,6 +994,7 @@ local function resolveCatalogMovementClips(pack,request)
     pack.playableClips=resolved
     pack.resolvedCount=successful
     pack.originalClipCount=total
+    if catalogCacheDirty then queueCatalogCacheSave() end
     return resolved
 end
 
@@ -804,6 +1106,9 @@ local function selectPose(pose,multiplier)
 end
 local function updateMovement()
     if not selectedPack then return end
+    -- A playing emote has exclusive control of movement animation layers.
+    -- As soon as it stops, selectedPack and its loaded tracks are unchanged.
+    if emoteMovementPaused then return end
     local now=os.clock()
     if now-lastUpdate<0.09 then return end
     lastUpdate=now
@@ -967,28 +1272,395 @@ end
 
 -- ========= UI (original, not copied from other projects) =========
 local palette={
-    base=Color3.fromRGB(13,11,21), panel=Color3.fromRGB(23,20,35),
-    row=Color3.fromRGB(34,29,48), purple=Color3.fromRGB(164,101,251),
-    white=Color3.fromRGB(240,235,252), muted=Color3.fromRGB(154,146,175)
+    base=Color3.fromRGB(10,10,15), panel=Color3.fromRGB(18,17,25),
+    row=Color3.fromRGB(27,26,36), purple=Color3.fromRGB(180,140,245),
+    white=Color3.fromRGB(235,237,247), muted=Color3.fromRGB(184,181,201)
 }
+local Design
 local function new(class,parent,props)
     local obj=Instance.new(class)
     for k,v in pairs(props or {}) do obj[k]=v end
     obj.Parent=parent
+    if Design then Design:register(obj,parent) end
     return obj
 end
 local function round(obj,r) new("UICorner",obj,{CornerRadius=UDim.new(0,r)}) end
 local function outline(obj,color,trans)
-    new("UIStroke",obj,{Color=color or palette.purple,Transparency=trans or 0.55,Thickness=1})
+    new("UIStroke",obj,{ApplyStrokeMode=Enum.ApplyStrokeMode.Border,Color=color or palette.purple,Transparency=trans or 0.55,Thickness=1})
 end
+-- Presentation only. No catalog, animation, favorite or FastKey controller is
+-- called here. Decorations never capture input; the existing controls own it.
+Design=(function()
+    local TweenService=game:GetService("TweenService")
+    local C={obsidian=Color3.fromRGB(10,10,15),graphite=Color3.fromRGB(27,26,36),
+        chrome=Color3.fromRGB(235,237,247),silver=Color3.fromRGB(184,181,201),
+        violet=Color3.fromRGB(157,103,239),cyan=Color3.fromRGB(141,220,255),
+        pink=Color3.fromRGB(212,152,219),deep=Color3.fromRGB(60,31,99)}
+    local self={alive=true,scopes=setmetatable({},{__mode="k"}),
+        alphas=setmetatable({},{__mode="k"}),buttons={},tweens={},links={},
+        factors={window=0,launcher=0},fireImages={},backgroundImages={},fires={}}
+    local function fx(class,parent,props)
+        local o=Instance.new(class)
+        for k,v in pairs(props or {})do o[k]=v end
+        if o:IsA("GuiObject")then o.Active=false;o.BorderSizePixel=0;o.AutoLocalize=false end
+        o.Parent=parent;return o
+    end
+    local function gradient(o,colors,rotation)
+        local points={}
+        for i,c in ipairs(colors)do points[i]=ColorSequenceKeypoint.new((i-1)/(#colors-1),c)end
+        return new("UIGradient",o,{Color=ColorSequence.new(points),Rotation=rotation or 25})
+    end
+    local function stroke(o,opacity,width)
+        return new("UIStroke",o,{ApplyStrokeMode=Enum.ApplyStrokeMode.Border,
+            Color=Color3.new(1,1,1),Transparency=opacity,Thickness=width or 1})
+    end
+    local function watch(signal,fn)
+        local c=signal:Connect(fn);self.links[#self.links+1]=c;return c
+    end
+    function self:tween(o,duration,props)
+        local old=self.tweens[o]
+        if old then old:Cancel();self.tweens[o]=nil end
+        if not self.alive then return end
+        local t=TweenService:Create(o,TweenInfo.new(duration,Enum.EasingStyle.Quart,Enum.EasingDirection.Out),props)
+        self.tweens[o]=t
+        t.Completed:Once(function()if self.tweens[o]==t then self.tweens[o]=nil end end)
+        t:Play()
+    end
+    function self:register(o,parent)
+        local scope=self.scopes[parent]
+        if not scope then return end
+        self.scopes[o]=scope
+        local values={}
+        if o:IsA("GuiObject")then
+            values.BackgroundTransparency=o.BackgroundTransparency
+            if o:IsA("TextLabel")or o:IsA("TextButton")or o:IsA("TextBox")then values.TextTransparency=o.TextTransparency end
+            if o:IsA("ImageLabel")or o:IsA("ImageButton")then values.ImageTransparency=o.ImageTransparency end
+            if o:IsA("ScrollingFrame")then values.ScrollBarImageTransparency=o.ScrollBarImageTransparency end
+        elseif o:IsA("UIStroke")then values.Transparency=o.Transparency end
+        if next(values)then
+            self.alphas[o]=values
+            for property,value in pairs(values)do o[property]=1-(1-value)*self.factors[scope] end
+        end
+    end
+    function self:base(o,property,value)
+        local values=self.alphas[o]
+        if values then values[property]=value end
+        o[property]=1-(1-value)*(self.factors[self.scopes[o]] or 1)
+    end
+    function self:fade(scope,value)
+        self.factors[scope]=value
+        for o,values in pairs(self.alphas)do
+            if self.scopes[o]==scope and o.Parent then
+                for property,base in pairs(values)do o[property]=1-(1-base)*value end
+            end
+        end
+    end
+    function self:metal(o,subtle)
+        o.BackgroundColor3=Color3.new(1,1,1)
+        gradient(o,subtle and {Color3.fromRGB(24,23,32),C.obsidian,Color3.fromRGB(29,27,39)}
+            or {Color3.fromRGB(36,33,47),C.obsidian,Color3.fromRGB(46,43,59)},28)
+        local edge=stroke(o,subtle and .78 or .56)
+        gradient(edge,{C.deep,C.silver,C.violet,C.cyan,C.deep},22)
+        return edge
+    end
+    function self:button(b,primary)
+        if self.buttons[b]then return end
+        b.AutoButtonColor=false
+        self:base(b,"BackgroundTransparency",1);self:base(b,"TextTransparency",1)
+        local face=new("Frame",b,{Name="MetalFace",AnchorPoint=Vector2.new(.5,.5),Position=UDim2.fromScale(.5,.5),
+            Size=UDim2.fromScale(1,1),BackgroundColor3=Color3.new(1,1,1),BorderSizePixel=0,ZIndex=1,Active=false})
+        round(face,9)
+        local colors=primary and {Color3.fromRGB(47,30,69),Color3.fromRGB(15,18,27),Color3.fromRGB(42,51,67)}
+            or {Color3.fromRGB(36,33,47),C.obsidian,Color3.fromRGB(37,34,48)}
+        local metal=gradient(face,colors,27)
+        local edge=stroke(face,primary and .35 or .64)
+        local edgeLight=gradient(edge,{C.deep,C.violet,C.chrome,C.cyan,C.deep},24)
+        local press=new("UIScale",face,{Scale=1})
+        -- A separate label stays chrome-white; dark UIGradients affect only
+        -- the surface, never the text. Existing .Text callbacks are mirrored.
+        local caption=new("TextLabel",face,{Name="MetalCaption",Size=UDim2.fromScale(1,1),
+            BackgroundTransparency=1,Text=b.Text,TextColor3=b.TextColor3,TextSize=b.TextSize,
+            FontFace=Font.new("rbxassetid://12187375422",Enum.FontWeight.SemiBold,Enum.FontStyle.Normal),
+            TextWrapped=b.TextWrapped,TextTruncate=Enum.TextTruncate.AtEnd,ZIndex=4,Active=false})
+        local flash=new("Frame",face,{Name="PressLight",Size=UDim2.fromScale(1,1),BackgroundColor3=C.cyan,
+            BackgroundTransparency=1,BorderSizePixel=0,ZIndex=2,Active=false})
+        round(flash,9)
+        local flashG=gradient(flash,{C.violet,C.cyan,C.chrome},25)
+        flashG.Transparency=NumberSequence.new({NumberSequenceKeypoint.new(0,1),NumberSequenceKeypoint.new(.55,.35),NumberSequenceKeypoint.new(1,1)})
+        local blend=new("NumberValue",b,{Value=0})
+        local record={face=face,caption=caption,metal=metal,edge=edge,edgeLight=edgeLight,scale=press,blend=blend,links={},primary=primary}
+        self.buttons[b]=record
+        local function bind(signal,fn)record.links[#record.links+1]=signal:Connect(fn)end
+        for _,property in ipairs({"Text","TextColor3","TextSize","TextWrapped"})do
+            bind(b:GetPropertyChangedSignal(property),function()caption[property]=b[property]end)
+        end
+        bind(blend.Changed,function()self:base(flash,"BackgroundTransparency",1-blend.Value*.24)end)
+        bind(b.InputBegan,function(input)
+            if input.UserInputType~=Enum.UserInputType.MouseButton1 and input.UserInputType~=Enum.UserInputType.Touch then return end
+            record.pointer=input;self:tween(press,.08,{Scale=.975})
+            local old=self.tweens[blend];if old then old:Cancel();self.tweens[blend]=nil end
+            blend.Value=1;self:tween(blend,.4,{Value=0})
+        end)
+        bind(b.MouseEnter,function()self:base(edge,"Transparency",.28)end)
+        bind(b.MouseLeave,function()self:base(edge,"Transparency",record.selected and .25 or (primary and .35 or .64))end)
+        bind(b.Destroying,function()
+            for _,c in ipairs(record.links)do c:Disconnect()end
+            for _,o in ipairs({press,blend})do if self.tweens[o]then self.tweens[o]:Cancel();self.tweens[o]=nil end end
+            self.buttons[b]=nil
+        end)
+    end
+    function self:select(b,selected)
+        local r=self.buttons[b];if not r then return end
+        r.selected=selected
+        if not r.indicator then
+            r.indicator=new("Frame",r.face,{Name="SelectionLight",Position=UDim2.new(0,0,.5,-10),
+                Size=UDim2.fromOffset(2,20),BackgroundColor3=C.cyan,BorderSizePixel=0,Active=false,ZIndex=4})
+            round(r.indicator,2)
+        end
+        r.indicator.Visible=selected
+        r.metal.Color=selected and ColorSequence.new({
+            ColorSequenceKeypoint.new(0,Color3.fromRGB(48,30,70)),ColorSequenceKeypoint.new(.55,Color3.fromRGB(18,17,28)),
+            ColorSequenceKeypoint.new(1,Color3.fromRGB(42,56,71))}) or ColorSequence.new({
+            ColorSequenceKeypoint.new(0,C.graphite),ColorSequenceKeypoint.new(.55,C.obsidian),ColorSequenceKeypoint.new(1,C.graphite)})
+        b.TextColor3=selected and C.chrome or C.silver
+        self:base(r.edge,"Transparency",selected and .25 or .64)
+    end
+    function self:windowControl(b,isClose)
+        local r=self.buttons[b]
+        r.caption.Visible=false
+        for i=1,(isClose and 2 or 1)do
+            local mark=new("Frame",r.face,{Name="ControlMark",AnchorPoint=Vector2.new(.5,.5),
+                Position=UDim2.fromScale(.5,.5),Size=UDim2.fromOffset(isClose and 13 or 12,1.5),
+                BackgroundColor3=C.chrome,BorderSizePixel=0,ZIndex=4,Active=false,
+                Rotation=isClose and (i==1 and 45 or -45)or 0})
+            round(mark,1)
+        end
+    end
+    function self:shortcuts(keys)
+        -- Existing TextButton colors still carry the binding state. Only this
+        -- noninteractive backdrop mirrors them; gesture/binding code is untouched.
+        for _,key in ipairs(keys)do
+            local b=key.button
+            local face=fx("Frame",b,{Name="FastKeyMetal",Size=UDim2.fromScale(1,1),
+                BackgroundColor3=Color3.new(1,1,1),ZIndex=0})
+            round(face,9)
+            local wash=gradient(face,{C.graphite,C.obsidian,C.graphite},28)
+            local edge=stroke(face,.58)
+            gradient(edge,{C.deep,C.violet,C.silver,C.cyan},30)
+            local function sync()
+                wash.Color=ColorSequence.new({
+                    ColorSequenceKeypoint.new(0,b.BackgroundColor3:Lerp(C.graphite,.5)),
+                    ColorSequenceKeypoint.new(.5,C.obsidian),
+                    ColorSequenceKeypoint.new(1,b.BackgroundColor3:Lerp(C.graphite,.6))})
+            end
+            sync();watch(b:GetPropertyChangedSignal("BackgroundColor3"),sync)
+            key.number.FontFace=Font.new("rbxassetid://12187375422",Enum.FontWeight.Bold,Enum.FontStyle.Normal)
+            key.number.TextSize=16
+        end
+    end
+    function self:background(parent)
+        local img=new("ImageLabel",parent,{Name="AmethystArtwork",Size=UDim2.fromScale(1,1),BackgroundTransparency=1,
+            Image="",ImageTransparency=.83,ScaleType=Enum.ScaleType.Crop,ZIndex=1,Active=false})
+        round(img,13);self.backgroundImages[#self.backgroundImages+1]=img;return img
+    end
+    local function noise(seed)return (math.sin(seed*12.9898+78.233)*43758.5453)%1 end
+    function self:fire(parent,name,width,height,perimeter)
+        local host=fx("Frame",parent,{Name=name,Size=UDim2.fromOffset(width,height),BackgroundTransparency=1,ClipsDescendants=false,ZIndex=0})
+        local f={host=host,roots={},wisps={},embers={},perimeter=perimeter}
+        local points={}
+        if perimeter then
+            for side,count in ipairs(perimeter)do for i=1,count do points[#points+1]={side=side,fraction=(i-.5)/count}end end
+        else for i=1,8 do points[i]={fraction=(i-.5)/8}end end
+        local function image(parent,core)
+            local img=fx("ImageLabel",parent,{Image="",Size=UDim2.fromOffset(1,1),BackgroundTransparency=1,
+                ImageTransparency=1,AnchorPoint=Vector2.new(.5,1),ScaleType=Enum.ScaleType.Stretch})
+            if not core then img.ImageRectOffset=Vector2.new(110,0);img.ImageRectSize=Vector2.new(1040,1254)end
+            local wash=gradient(img,core and {Color3.fromRGB(151,62,246),C.cyan,C.chrome}
+                or {Color3.fromRGB(205,63,161),Color3.fromRGB(151,62,246),Color3.fromRGB(213,181,255),C.cyan},90)
+            wash.Transparency=NumberSequence.new({NumberSequenceKeypoint.new(0,.3),NumberSequenceKeypoint.new(.2,.02),
+                NumberSequenceKeypoint.new(.78,0),NumberSequenceKeypoint.new(1,1)})
+            self.fireImages[#self.fireImages+1]=img;return img
+        end
+        for i,p in ipairs(points)do
+            local seed=i*1.713+(perimeter and #name*.23 or 0)
+            local node=fx("Frame",host,{Size=UDim2.fromOffset(1,1),BackgroundTransparency=1})
+            f.roots[i]={node=node,layers={image(node,false),image(node,false)},core=image(node,true),
+                seed=seed,fraction=p.fraction,side=p.side,height=.85+noise(seed)*.29,rate=.61+noise(seed)*.18}
+        end
+        for i=1,6 do
+            f.wisps[i]={node=image(host,true),seed=i*1.391,rate=.53+noise(i)*.17}
+            local ember=fx("Frame",host,{Size=UDim2.fromOffset(1.3,3.5),BackgroundTransparency=1,
+                BackgroundColor3=i%2==0 and C.cyan or C.pink,AnchorPoint=Vector2.new(.5,.5)})
+            fx("UICorner",ember,{CornerRadius=UDim.new(0,2)})
+            f.embers[i]={node=ember,seed=i*.713,rate=.38+noise(i+6)*.22}
+        end
+        self.fires[#self.fires+1]=f;return f
+    end
+    local function updateFire(f,time,opacity)
+        local w,h=f.host.Size.X.Offset,f.host.Size.Y.Offset
+        for _,p in ipairs(f.roots)do
+            local x,y=-3+(w+6)*p.fraction,h+2
+            local height,width=(h+40)*p.height,47
+            if f.perimeter then
+                if p.side==1 or p.side==3 then
+                    x=10+(w-20)*p.fraction;y=p.side==1 and 4 or h+13
+                    width=math.clamp(w/f.perimeter[p.side]*1.4,18,66);height=(p.side==1 and 64 or 55)*p.height
+                else x=p.side==2 and w+3 or -3;y=16+(h-24)*p.fraction;width=38;height=math.clamp(h/f.perimeter[p.side]*1.45,66,92)*p.height end
+            end
+            p.node.Position=UDim2.fromOffset(x,y)
+            for layer,img in ipairs(p.layers)do
+                local age=(time*p.rate+p.seed+(layer-1)*.5)%1
+                local bend=math.sin(time*2.5+p.seed)*2+math.sin(time*4.3-p.seed)*.7
+                img.Position=UDim2.fromOffset(bend+math.sin(age*math.pi)*(layer==1 and -3 or 3),-age*5)
+                img.Size=UDim2.fromOffset(width*(1.1-age*.2),height*(.73+age*.53));img.Rotation=bend*(layer==1 and -1.5 or 2)
+                img.ImageTransparency=1-math.sin(age*math.pi)^2*.87*opacity
+            end
+            p.core.Position=UDim2.fromOffset(math.sin(time*3-p.seed)*1.5,0)
+            p.core.Size=UDim2.fromOffset(width*.63,height*.76);p.core.Rotation=math.sin(time*2.6+p.seed)*3
+            p.core.ImageTransparency=1-(.36+.12*math.sin(time*3.1+p.seed)^2)*opacity
+        end
+        for _,p in ipairs(f.wisps)do
+            local age=(time*p.rate+p.seed)%1
+            local x=-5+(w+10)*noise(p.seed)+math.sin(age*4+p.seed)*5*age
+            local y=h+8-age*(h+65)
+            if f.perimeter then
+                local side=math.floor(p.seed*10)%3
+                if side==0 then y=3-age*60 else x=side==1 and -8 or w+8;y=h*noise(p.seed+2)-age*62 end
+            end
+            p.node.Position=UDim2.fromOffset(x,y);p.node.Size=UDim2.fromOffset(22*(1-age*.38),42+age*13)
+            p.node.Rotation=math.sin(time*2+p.seed)*7;p.node.ImageTransparency=1-math.sin(age*math.pi)^2*.66*opacity
+        end
+        for _,p in ipairs(f.embers)do
+            local age=(time*p.rate+p.seed)%1
+            local x=-8+(w+16)*noise(p.seed+4)+math.sin(age*5+p.seed)*4
+            local y=h+6-age*(h+54)
+            if f.perimeter then
+                local side=math.floor(p.seed*10)%3
+                if side==0 then y=-8-age*48 else x=(side==1 and -11 or w+11)+math.sin(age*5+p.seed)*3;y=h*noise(p.seed+5)-age*64 end
+            end
+            p.node.Position=UDim2.fromOffset(x,y);p.node.BackgroundTransparency=1-math.sin(age*math.pi)^2*.62*opacity
+        end
+    end
+    function self:attach(root,gui)
+        self.root=root;self.gui=gui;self.scopes[root]="window"
+        root.BackgroundTransparency=1;root.ClipsDescendants=false
+        -- Opaque surface masks inward flames; they stay outside the silhouette.
+        self.surface=new("Frame",root,{Name="ObsidianSurface",Size=UDim2.fromScale(1,1),BackgroundColor3=Color3.new(1,1,1),BorderSizePixel=0,ZIndex=1,Active=false})
+        round(self.surface,15);self:metal(self.surface,true);self:background(self.surface)
+        for i=1,3 do
+            local glow=new("Frame",root,{Name="AmethystHalo",Position=UDim2.fromOffset(-i*2,-i*2),
+                Size=UDim2.new(1,i*4,1,i*4),BackgroundTransparency=1,BorderSizePixel=0,ZIndex=0,Active=false})
+            round(glow,15+i*2);local edge=stroke(glow,.86+i*.025,2)
+            gradient(edge,{C.deep,C.violet,C.cyan,C.pink,C.deep},24)
+        end
+        self.windowFire=self:fire(root,"WindowFire",628,459,{10,5,8,5})
+        self.opacity=new("NumberValue",gui,{Name="WindowVisualOpacity",Value=0})
+        self.launcherOpacity=new("NumberValue",gui,{Name="LauncherVisualOpacity",Value=0})
+        watch(self.opacity.Changed,function()
+            self:fade("window",self.opacity.Value)
+            if self.opacity.Value==0 and self.minimized then root.Visible=false end
+        end)
+        watch(self.launcherOpacity.Changed,function()
+            self:fade("launcher",self.launcherOpacity.Value)
+            if self.launcherOpacity.Value==0 and not self.minimized and self.launcher then self.launcher.Visible=false end
+        end)
+        watch(UserInputService.InputEnded,function(input)
+            for _,r in pairs(self.buttons)do
+                if r.pointer==input or (r.pointer and r.pointer.UserInputType==Enum.UserInputType.MouseButton1 and input.UserInputType==Enum.UserInputType.MouseButton1)then
+                    r.pointer=nil;self:tween(r.scale,.22,{Scale=1})
+                end
+            end
+        end)
+        watch(UserInputService.WindowFocusReleased,function()
+            for _,r in pairs(self.buttons)do r.pointer=nil;self:tween(r.scale,.18,{Scale=1})end
+        end)
+        watch(gui.Destroying,function()self:destroy()end)
+    end
+    function self:attachLauncher(launcher,fallback)
+        self.launcher=launcher;self.scopes[launcher]="launcher"
+        self.alphas[launcher]={BackgroundTransparency=1,ImageTransparency=0}
+        self.scopes[fallback]="launcher";self.alphas[fallback]={BackgroundTransparency=1,TextTransparency=0}
+        self.logoFire=self:fire(self.gui,"MinimizedLogoFire",66,66)
+        self.logoFire.host.ZIndex=59;self.logoFire.host.Visible=false
+        self:fade("launcher",0)
+    end
+    function self:setMinimized(value)
+        self.minimized=value
+        if value then self.launcher.Visible=true else self.root.Visible=true end
+        self:tween(self.opacity,.26,{Value=value and 0 or 1})
+        self:tween(self.launcherOpacity,.26,{Value=value and 1 or 0})
+    end
+    function self:loadArtwork()
+        task.spawn(function()
+            local custom=getcustomasset or getsynasset
+            if type(custom)~="function"then return end
+            for _,asset in ipairs({
+                {file="ReyznXEmotes_flame_v1.png",path="flame-wisp-v1.png",size=1172326,images=self.fireImages},
+                {file="ReyznXEmotes_background_v2.jpg",path="background-cyber-v2.jpg",size=167325,images=self.backgroundImages,jpeg=true},
+            })do
+                local function valid(b)
+                    return type(b)=="string"and #b==asset.size and (asset.jpeg and b:sub(1,3)==string.char(255,216,255)
+                        or not asset.jpeg and b:sub(1,8)==string.char(137,80,78,71,13,10,26,10))
+                end
+                local cached=false
+                if type(readfile)=="function"then local ok,b=pcall(readfile,asset.file);cached=ok and valid(b)end
+                if not cached and type(writefile)=="function"then
+                    local ok,b=pcall(function()return game:HttpGet("https://raw.githubusercontent.com/hzReyzn/Ghislain/main/assets/reyzn-x/"..asset.path)end)
+                    if not self.alive then return end
+                    if ok and valid(b)then cached=pcall(writefile,asset.file,b)end
+                end
+                if cached and self.alive then
+                    local ok,uri=pcall(custom,asset.file)
+                    if ok and type(uri)=="string"and uri~=""then
+                        for _,img in ipairs(asset.images)do if img.Parent then img.Image=uri end end
+                    end
+                end
+            end
+        end)
+    end
+    function self:start()
+        self:setMinimized(false);self:loadArtwork()
+        local elapsed,budget=0,0
+        watch(RunService.Heartbeat,function(dt)
+            if not self.alive then return end
+            elapsed+=dt;budget+=dt
+            if budget<1/60 then return end
+            budget=budget%(1/60)
+            local showWindow=self.root.Visible and self.opacity.Value>.001
+            self.windowFire.host.Visible=showWindow
+            if showWindow then
+                updateFire(self.windowFire,elapsed,self.opacity.Value)
+                for _,r in pairs(self.buttons)do if r.selected then r.edgeLight.Offset=Vector2.new(math.sin(elapsed*.45)*.26,0)end end
+            end
+            local showLogo=self.launcher.Visible and self.launcherOpacity.Value>.001
+            self.logoFire.host.Visible=showLogo
+            if showLogo then
+                self.logoFire.host.Position=self.launcher.Position
+                updateFire(self.logoFire,elapsed,self.launcherOpacity.Value)
+            end
+        end)
+    end
+    function self:destroy()
+        if not self.alive then return end
+        self.alive=false
+        for _,c in ipairs(self.links)do c:Disconnect()end
+        for _,r in pairs(self.buttons)do for _,c in ipairs(r.links)do c:Disconnect()end end
+        for _,t in pairs(self.tweens)do t:Cancel()end
+        table.clear(self.links);table.clear(self.buttons);table.clear(self.tweens)
+        table.clear(self.fireImages);table.clear(self.backgroundImages);table.clear(self.fires)
+        table.clear(self.alphas);table.clear(self.scopes)
+    end
+    return self
+end)()
+
 local function text(parent,value,x,y,w,h,size,bold,color)
     return new("TextLabel",parent,{
         Position=UDim2.fromOffset(x,y),Size=UDim2.fromOffset(w,h),
         BackgroundTransparency=1,Text=tostring(value),
         TextColor3=color or palette.white,
-        Font=bold and Enum.Font.GothamBold or Enum.Font.Gotham,
-        TextSize=size or 13,TextXAlignment=Enum.TextXAlignment.Left,
-        TextTruncate=Enum.TextTruncate.AtEnd
+        FontFace=Font.new("rbxassetid://12187375422",bold and Enum.FontWeight.SemiBold or Enum.FontWeight.Medium,Enum.FontStyle.Normal),
+        TextSize=size or 16,TextXAlignment=Enum.TextXAlignment.Left,
+        TextTruncate=Enum.TextTruncate.AtEnd,ZIndex=4
     })
 end
 local function button(parent,value,x,y,w,h,isPrimary)
@@ -996,9 +1668,10 @@ local function button(parent,value,x,y,w,h,isPrimary)
         Position=UDim2.fromOffset(x,y),Size=UDim2.fromOffset(w,h),
         BackgroundColor3=isPrimary and Color3.fromRGB(95,52,150) or palette.row,
         BorderSizePixel=0,Text=tostring(value),TextColor3=palette.white,
-        TextSize=12,Font=Enum.Font.GothamBold,AutoButtonColor=true
+        TextSize=16,Font=Enum.Font.GothamBold,AutoButtonColor=false,ZIndex=3
     })
-    round(obj,8)
+    round(obj,9)
+    Design:button(obj,isPrimary)
     return obj
 end
 
@@ -1017,7 +1690,7 @@ local root=new("Frame",gui,{
     Position=UDim2.fromScale(0.5,0.5),AnchorPoint=Vector2.new(0.5,0.5),
     BackgroundColor3=palette.base,BorderSizePixel=0
 })
-round(root,15);outline(root,palette.purple,0.28)
+Design:attach(root,gui)
 local scale=new("UIScale",root,{Scale=1})
 local function rescale()
     local cam=workspace.CurrentCamera
@@ -1030,20 +1703,31 @@ if workspace.CurrentCamera then
     trackConnection(workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"),rescale)
 end
 
-local header=new("Frame",root,{BackgroundTransparency=1,Size=UDim2.new(1,0,0,66)})
-text(header,"REYZN X",16,9,150,29,21,true,palette.white)
-text(header,"FE EMOTES",122,9,175,29,21,true,palette.purple)
-text(header,"Universal R15  /  FE Emotes + Animations",17,38,475,18,11,false,palette.muted)
-local minimize=button(header,"−",548,14,30,30,false)
-local close=button(header,"×",586,14,30,30,false)
-local bar=new("Frame",root,{Position=UDim2.fromOffset(0,66),
-    Size=UDim2.new(1,0,0,1),BorderSizePixel=0,BackgroundColor3=Color3.fromRGB(64,49,89)})
+local header=new("Frame",root,{BackgroundTransparency=1,Size=UDim2.new(1,0,0,66),ZIndex=3})
+local headerLogo=new("ImageLabel",header,{
+    Name="BrandLogo",Position=UDim2.fromOffset(12,8),
+    Size=UDim2.fromOffset(50,50),Image="",
+    BackgroundTransparency=1,ScaleType=Enum.ScaleType.Fit
+})
+local headerLogoFallback=text(header,"R",18,10,40,40,29,true,palette.purple)
+headerLogoFallback.TextXAlignment=Enum.TextXAlignment.Center
+text(header,"REYZN X",73,14,122,32,24,true,palette.white)
+text(header,"FE EMOTES",207,14,180,32,21,true,palette.purple)
+local minimize=button(header,"−",530,14,38,38,false)
+local close=button(header,"×",577,14,38,38,false)
+Design:windowControl(minimize,false)
+Design:windowControl(close,true)
+local bar=new("Frame",root,{Position=UDim2.fromOffset(14,66),
+    Size=UDim2.new(1,-28,0,1),BorderSizePixel=0,BackgroundColor3=palette.muted,BackgroundTransparency=.8,ZIndex=3})
+new("UIGradient",bar,{Color=ColorSequence.new({ColorSequenceKeypoint.new(0,palette.purple),
+    ColorSequenceKeypoint.new(.55,Color3.fromRGB(141,220,255)),ColorSequenceKeypoint.new(1,palette.purple)}),
+    Transparency=NumberSequence.new({NumberSequenceKeypoint.new(0,.8),NumberSequenceKeypoint.new(.5,0),NumberSequenceKeypoint.new(1,.8)})})
 local sidebar=new("Frame",root,{Position=UDim2.fromOffset(12,79),
-    Size=UDim2.fromOffset(141,337),BackgroundColor3=palette.panel,BorderSizePixel=0})
-round(sidebar,11)
+    Size=UDim2.fromOffset(141,337),BackgroundColor3=palette.panel,BackgroundTransparency=.5,BorderSizePixel=0,ZIndex=3})
+round(sidebar,11);Design:metal(sidebar,true)
 local body=new("Frame",root,{Position=UDim2.fromOffset(164,79),
-    Size=UDim2.fromOffset(451,337),BackgroundColor3=palette.panel,BorderSizePixel=0})
-round(body,11)
+    Size=UDim2.fromOffset(451,337),BackgroundColor3=palette.panel,BackgroundTransparency=.78,BorderSizePixel=0,ZIndex=3})
+round(body,11);Design:metal(body,true)
 local tabs={}
 for i,name in ipairs({"Emotes","Packs","Favorites","Settings"}) do
     local displayName = name=="Emotes" and "FE Emotes" or (name=="Packs" and "Animations" or name)
@@ -1055,22 +1739,23 @@ for i,name in ipairs({"Emotes","Packs","Favorites","Settings"}) do
         if render then render() end
     end)
 end
-text(sidebar,"R15  •  FE depends",9,296,125,22,10,false,palette.muted)
 
 searchBox=new("TextBox",body,{
     Position=UDim2.fromOffset(12,11),Size=UDim2.fromOffset(277,37),
     BackgroundColor3=palette.row,BorderSizePixel=0,
     ClearTextOnFocus=false,Text="",TextColor3=palette.white,
     PlaceholderText="Search name or animation ID",PlaceholderColor3=palette.muted,
-    TextSize=13,Font=Enum.Font.Gotham,TextXAlignment=Enum.TextXAlignment.Left
+    TextSize=16,FontFace=Font.new("rbxassetid://12187375422",Enum.FontWeight.Medium,Enum.FontStyle.Normal),
+    TextXAlignment=Enum.TextXAlignment.Left,ZIndex=3
 })
 new("UIPadding",searchBox,{PaddingLeft=UDim.new(0,11)})
-round(searchBox,8)
+round(searchBox,9)
+outline(searchBox,palette.muted,.82)
 local searchCatalog=button(body,"Load more",299,11,140,37,true)
 local list=new("ScrollingFrame",body,{
-    Position=UDim2.fromOffset(12,60),Size=UDim2.fromOffset(427,216),
+    Position=UDim2.fromOffset(12,60),Size=UDim2.fromOffset(427,226),
     BackgroundTransparency=1,BorderSizePixel=0,ScrollBarThickness=3,
-    ScrollBarImageColor3=palette.purple,CanvasSize=UDim2.fromOffset(0,0)
+    ScrollBarImageColor3=palette.purple,CanvasSize=UDim2.fromOffset(0,0),ZIndex=3
 })
 local layout=new("UIListLayout",list,{
     Padding=UDim.new(0,7),SortOrder=Enum.SortOrder.LayoutOrder
@@ -1078,43 +1763,361 @@ local layout=new("UIListLayout",list,{
 trackConnection(layout:GetPropertyChangedSignal("AbsoluteContentSize"),function()
     list.CanvasSize=UDim2.fromOffset(0,layout.AbsoluteContentSize.Y+5)
 end)
-local prev=button(body,"◀ Prev",12,286,88,34,false)
-local next=button(body,"Next ▶",351,286,88,34,false)
-local pageLabel=text(body,"Page 1",115,287,225,33,12,true,palette.muted)
+local prev=button(body,"◀ Prev",12,296,88,32,false)
+local next=button(body,"Next ▶",351,296,88,32,false)
+local pageLabel=text(body,"Page 1",115,296,225,32,14,true,palette.muted)
 pageLabel.TextXAlignment=Enum.TextXAlignment.Center
-statusText=text(root,"Ready • Reproduction may be restricted by game",15,428,598,22,11,false,palette.muted)
+statusText=text(root,"Ready",15,427,598,22,13,false,palette.muted)
 
-local minimized=false
-trackConnection(minimize.MouseButton1Click,function()
-    minimized=not minimized
-    root.Size=UDim2.fromOffset(628,minimized and 66 or 459)
-    bar.Visible=not minimized
-    sidebar.Visible=not minimized
-    body.Visible=not minimized
-    statusText.Visible=not minimized
-    minimize.Text=minimized and "+" or "−"
+-- FastKeys are independent ScreenGui children, so they remain visible
+-- when the main window is minimized. Eight small keys start at upper-right,
+-- safely above the usual mobile jump button.
+local FAST_SIZE=48
+local FAST_GAP=5
+local fastKeyPicker
+local fastKeyPickerTitle
+local fastKeyPickerOptions={}
+local fastKeyPendingEmote=nil
+local function openFastKeyPicker(item)
+    if not item or item.kind~="Emote" then return end
+    fastKeyPendingEmote=item
+    fastKeyPickerTitle.Text="Assign emote: "..tostring(item.name)
+    for i=1,FAST_KEY_COUNT do
+        local bound=fastKeyBindings[i]
+        fastKeyPickerOptions[i].Text="F"..i.."\n"..(bound and bound.name or "Empty")
+    end
+    fastKeyPicker.Visible=true
+end
+
+fastKeyPicker=new("Frame",root,{
+    Name="FastKeyChooser",
+    Position=UDim2.fromOffset(99,153),
+    Size=UDim2.fromOffset(430,171),
+    BackgroundColor3=palette.panel,BorderSizePixel=0,
+    ZIndex=40,Visible=false
+})
+round(fastKeyPicker,12)
+Design:metal(fastKeyPicker,false)
+fastKeyPickerTitle=new("TextLabel",fastKeyPicker,{
+    Position=UDim2.fromOffset(14,8),Size=UDim2.fromOffset(352,29),
+    BackgroundTransparency=1,Text="Choose FastKey",
+    TextColor3=palette.white,FontFace=Font.new("rbxassetid://12187375422",Enum.FontWeight.SemiBold,Enum.FontStyle.Normal),
+    TextSize=17,TextXAlignment=Enum.TextXAlignment.Left,
+    TextTruncate=Enum.TextTruncate.AtEnd,ZIndex=41
+})
+local pickerClose=new("TextButton",fastKeyPicker,{
+    Position=UDim2.fromOffset(389,8),Size=UDim2.fromOffset(30,30),
+    BackgroundColor3=palette.row,BorderSizePixel=0,
+    Text="×",TextColor3=palette.white,Font=Enum.Font.GothamBold,
+    TextSize=19,ZIndex=42
+})
+round(pickerClose,7)
+Design:button(pickerClose,false)
+Design:windowControl(pickerClose,true)
+trackConnection(pickerClose.MouseButton1Click,function()
+    fastKeyPicker.Visible=false
+    fastKeyPendingEmote=nil
+end)
+for i=1,FAST_KEY_COUNT do
+    local slotIndex=i
+    local key=new("TextButton",fastKeyPicker,{
+        Position=UDim2.fromOffset(15+((i-1)%4)*103,48+math.floor((i-1)/4)*58),
+        Size=UDim2.fromOffset(94,51),
+        BackgroundColor3=palette.row,BorderSizePixel=0,
+        Font=Enum.Font.GothamBold,TextSize=10,
+        TextColor3=palette.white,TextWrapped=true,
+        Text="F"..i.."\nEmpty",ZIndex=42
+    })
+    round(key,8)
+    key.TextSize=13
+    Design:button(key,false)
+    fastKeyPickerOptions[i]=key
+    trackConnection(key.MouseButton1Click,function()
+        if fastKeyPendingEmote then
+            assignFastKey(slotIndex,fastKeyPendingEmote)
+        end
+        fastKeyPendingEmote=nil
+        fastKeyPicker.Visible=false
+    end)
+end
+
+local activeFastKeyGesture=nil
+local function viewportDimensions()
+    local camera=workspace.CurrentCamera
+    return camera and camera.ViewportSize or Vector2.new(900,600)
+end
+for i=1,FAST_KEY_COUNT do
+    local slotIndex=i
+    local col=(i-1)%2
+    local row=math.floor((i-1)/2)
+    local initial=UDim2.new(1,-(10+(1-col)*(FAST_SIZE+FAST_GAP)+FAST_SIZE),
+        0,82+row*(FAST_SIZE+FAST_GAP))
+    local saved=fastKeyPositions[i]
+    if saved then initial=UDim2.fromScale(saved.x,saved.y) end
+    local key=new("TextButton",gui,{
+        Name="ReyznFastKey"..i,
+        Position=initial,
+        Size=UDim2.fromOffset(FAST_SIZE,FAST_SIZE),
+        BackgroundColor3=palette.row,BorderSizePixel=0,
+        Text="",AutoButtonColor=true,Active=true,
+        ZIndex=35
+    })
+    round(key,9)
+    outline(key,palette.purple,0.3)
+    local number=new("TextLabel",key,{
+        BackgroundTransparency=1,Position=UDim2.fromOffset(2,3),
+        Size=UDim2.fromOffset(44,19),Text="F"..i,
+        Font=Enum.Font.GothamBold,TextSize=14,
+        TextColor3=palette.white,ZIndex=36
+    })
+    local name=new("TextLabel",key,{
+        BackgroundTransparency=1,Position=UDim2.fromOffset(3,25),
+        Size=UDim2.fromOffset(42,16),Text="EMPTY",
+        Font=Enum.Font.Gotham,TextSize=9,
+        TextColor3=palette.white,ZIndex=36,
+        TextTruncate=Enum.TextTruncate.AtEnd
+    })
+    fastKeyButtons[i]={button=key,name=name,number=number}
+    updateFastKeyButton(i)
+    trackConnection(key.InputBegan,function(input)
+        if not running or activeFastKeyGesture then return end
+        local kind=input.UserInputType
+        if kind~=Enum.UserInputType.MouseButton1
+            and kind~=Enum.UserInputType.Touch then return end
+        activeFastKeyGesture={
+            index=slotIndex,input=input,
+            origin=input.Position,
+            initial=key.AbsolutePosition,
+            moved=false
+        }
+    end)
+end
+trackConnection(UserInputService.InputChanged,function(input)
+    local g=activeFastKeyGesture
+    if not g then return end
+    local mouse=(g.input.UserInputType==Enum.UserInputType.MouseButton1
+        and input.UserInputType==Enum.UserInputType.MouseMovement)
+    if input~=g.input and not mouse then return end
+    local delta=input.Position-g.origin
+    if delta.Magnitude>=9 then g.moved=true end
+    if not g.moved then return end
+    local view=viewportDimensions()
+    local x=math.clamp(g.initial.X+delta.X,4,math.max(4,view.X-FAST_SIZE-4))
+    local y=math.clamp(g.initial.Y+delta.Y,44,math.max(44,view.Y-FAST_SIZE-4))
+    fastKeyButtons[g.index].button.Position=UDim2.fromOffset(x,y)
+end)
+trackConnection(UserInputService.InputEnded,function(input)
+    local g=activeFastKeyGesture
+    if not g then return end
+    local mouseUp=(g.input.UserInputType==Enum.UserInputType.MouseButton1
+        and input.UserInputType==Enum.UserInputType.MouseButton1)
+    if input~=g.input and not mouseUp then return end
+    activeFastKeyGesture=nil
+    if g.moved then
+        local key=fastKeyButtons[g.index].button
+        local view=viewportDimensions()
+        fastKeyPositions[g.index]={
+            x=math.clamp(key.AbsolutePosition.X/math.max(1,view.X),0,1),
+            y=math.clamp(key.AbsolutePosition.Y/math.max(1,view.Y),0,1)
+        }
+        saveFastKeys()
+        return
+    end
+    local emote=fastKeyBindings[g.index]
+    if emote then
+        task.spawn(function()
+            if running then playEmote(emote) end
+        end)
+    else
+        say("FastKey F"..g.index.." is empty. Tap KEY beside an emote to assign it.")
+    end
 end)
 
-local drag=false
-local dragOrigin,dragPosition,dragTouch
-trackConnection(header.InputBegan,function(input)
+
+Design:shortcuts(fastKeyButtons)
+
+local minimized=false
+-- Only Emotes is changed. As in Reyzn X, the logo is saved with
+-- writefile and displayed with getcustomasset/getsynasset.
+local logoLauncher=new("ImageButton",gui,{
+    Name="EmotesLogoLauncher",Size=UDim2.fromOffset(66,66),
+    Position=UDim2.fromOffset(16,155),
+    Image="",ScaleType=Enum.ScaleType.Fit,
+    BackgroundTransparency=1,BorderSizePixel=0,
+    AutoButtonColor=false,Active=true,Visible=false,ZIndex=60
+})
+-- The PNG has its own rounded shape. No secondary frame or border.
+local launcherFallback=new("TextLabel",logoLauncher,{
+    Size=UDim2.fromScale(1,1),BackgroundTransparency=1,
+    Text="R",TextColor3=palette.purple,
+    Font=Enum.Font.GothamBold,TextSize=38,ZIndex=61
+})
+Design:attachLauncher(logoLauncher,launcherFallback)
+local function decodeLogo(data)
+    if type(data)~="string" or #data<60 or #data>200000 then return nil end
+    local alphabet="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+    local output,carry,bits={},0,0
+    for i=1,#data do
+        local ch=data:sub(i,i)
+        if ch=="=" then break end
+        local pos=alphabet:find(ch,1,true)
+        if pos then
+            carry=carry*64+(pos-1)
+            bits=bits+6
+            if bits>=8 then
+                bits=bits-8
+                local m=2^bits
+                output[#output+1]=string.char(math.floor(carry/m))
+                carry=carry%m
+            end
+        elseif not ch:match("%s") then
+            return nil
+        end
+    end
+    return table.concat(output)
+end
+local function validLogo(bytes)
+    return type(bytes)=="string" and #bytes>64 and #bytes<180000
+       and bytes:sub(1,8)==string.char(137,80,78,71,13,10,26,10)
+end
+task.spawn(function()
+    local customAsset=getcustomasset or getsynasset
+    if type(customAsset)~="function" then
+        warn("[Reyzn X Emotes] Logo requires getcustomasset/getsynasset.")
+        return
+    end
+    local filename="ReyznXEmotes_R_logo_centered_v2.png"
+    local cached=false
+    if type(readfile)=="function" then
+        local ok,bytes=pcall(function() return readfile(filename) end)
+        cached=ok and validLogo(bytes)
+    end
+    if not cached and type(writefile)=="function" then
+        local url="https://raw.githubusercontent.com/hzReyzn/Roblox-yeahhh-/reyzn-emotes-v18-logo-8keys-test/assets/reyzn-emotes-logo-centered-v2.b64"
+        local ok,encoded=pcall(function() return game:HttpGet(url) end)
+        if ok then
+            local bytes=decodeLogo(encoded)
+            if validLogo(bytes) then
+                cached=pcall(function() writefile(filename,bytes) end)
+            end
+        end
+    end
+    if not cached or not running then return end
+    local ok,uri=pcall(customAsset,filename)
+    if ok and type(uri)=="string" and uri~="" and running then
+        headerLogo.Image=uri
+        logoLauncher.Image=uri
+        headerLogoFallback.Visible=false
+        launcherFallback.Visible=false
+    end
+end)
+local function setMinimized(value)
+    minimized=value
+    Design:setMinimized(value)
+    if value then
+        fastKeyPicker.Visible=false
+        fastKeyPendingEmote=nil
+    end
+end
+local launcherGesture
+trackConnection(logoLauncher.InputBegan,function(input)
+    if not running or launcherGesture then return end
     if input.UserInputType==Enum.UserInputType.MouseButton1
-        or input.UserInputType==Enum.UserInputType.Touch then
-        drag=true
-        dragOrigin=input.Position
-        dragPosition=root.Position
-        dragTouch=input
+       or input.UserInputType==Enum.UserInputType.Touch then
+        launcherGesture={
+            start=input.Position,
+            origin=logoLauncher.AbsolutePosition,
+            input=input,moved=false
+        }
     end
 end)
 trackConnection(UserInputService.InputChanged,function(input)
-    if drag and (input==dragTouch or input.UserInputType==Enum.UserInputType.MouseMovement) then
+    local g=launcherGesture
+    if not g then return end
+    local mouse=g.input.UserInputType==Enum.UserInputType.MouseButton1
+       and input.UserInputType==Enum.UserInputType.MouseMovement
+    if input~=g.input and not mouse then return end
+    local delta=input.Position-g.start
+    if delta.Magnitude>=9 then g.moved=true end
+    if g.moved then
+        local cam=workspace.CurrentCamera
+        local view=cam and cam.ViewportSize or Vector2.new(900,600)
+        logoLauncher.Position=UDim2.fromOffset(
+            math.clamp(g.origin.X+delta.X,4,math.max(4,view.X-70)),
+            math.clamp(g.origin.Y+delta.Y,40,math.max(40,view.Y-70))
+        )
+    end
+end)
+trackConnection(UserInputService.InputEnded,function(input)
+    local g=launcherGesture
+    if not g then return end
+    local mouseUp=g.input.UserInputType==Enum.UserInputType.MouseButton1
+       and input.UserInputType==Enum.UserInputType.MouseButton1
+    if input~=g.input and not mouseUp then return end
+    launcherGesture=nil
+    if running and not g.moved then setMinimized(false) end
+end)
+trackConnection(minimize.MouseButton1Click,function()
+    setMinimized(true)
+end)
+
+-- Free-area drag: top, sides, bottom and empty panel space.
+-- Never steal gestures from tabs, search, buttons or the scrolling list.
+local drag=false
+local dragOrigin,dragPosition,dragTouch
+local function pointInside(object,point)
+    if not object or not object.Visible then return false end
+    local pos,size=object.AbsolutePosition,object.AbsoluteSize
+    return point.X>=pos.X and point.Y>=pos.Y
+        and point.X<=pos.X+size.X and point.Y<=pos.Y+size.Y
+end
+local function overInteractiveControl(point)
+    if pointInside(close,point) or pointInside(minimize,point) then return true end
+    if minimized then return false end
+    if pointInside(searchBox,point) or pointInside(searchCatalog,point)
+        or pointInside(list,point) or pointInside(prev,point)
+        or pointInside(next,point) then return true end
+    for _,tab in pairs(tabs) do
+        if pointInside(tab,point) then return true end
+    end
+    return false
+end
+local function beginDrag(input)
+    if not running or drag then return end
+    local kind=input.UserInputType
+    if kind~=Enum.UserInputType.MouseButton1
+        and kind~=Enum.UserInputType.Touch then return end
+    if not pointInside(root,input.Position)
+        or pointInside(fastKeyPicker,input.Position)
+        or overInteractiveControl(input.Position) then return end
+    drag=true
+    dragOrigin=input.Position
+    dragPosition=root.Position
+    dragTouch=input
+end
+-- Listen on every noninteractive background, not just the header.
+-- This includes the edge margins on the root Frame.
+for _,surface in ipairs({root,header,bar,sidebar,body,statusText,pageLabel,Design.surface,Design.backgroundImages[1]}) do
+    surface.Active=true
+    trackConnection(surface.InputBegan,beginDrag)
+end
+trackConnection(UserInputService.InputChanged,function(input)
+    if not drag or not dragTouch then return end
+    local isPointer=(dragTouch.UserInputType==Enum.UserInputType.MouseButton1
+        and input.UserInputType==Enum.UserInputType.MouseMovement)
+    if input==dragTouch or isPointer then
         local delta=input.Position-dragOrigin
         root.Position=UDim2.new(dragPosition.X.Scale,dragPosition.X.Offset+delta.X,
             dragPosition.Y.Scale,dragPosition.Y.Offset+delta.Y)
     end
 end)
 trackConnection(UserInputService.InputEnded,function(input)
-    if input==dragTouch then drag=false end
+    if input==dragTouch or (dragTouch
+        and dragTouch.UserInputType==Enum.UserInputType.MouseButton1
+        and input.UserInputType==Enum.UserInputType.MouseButton1) then
+        drag=false
+        dragTouch=nil
+    end
 end)
 
 local function closeUI()
@@ -1138,21 +2141,30 @@ end
 local function listItem(item,index)
     local frame=new("Frame",list,{
         Size=UDim2.new(1,-6,0,51),LayoutOrder=index,
-        BackgroundColor3=palette.row,BorderSizePixel=0
+        BackgroundColor3=palette.row,BackgroundTransparency=.14,BorderSizePixel=0
     })
-    round(frame,8)
-    text(frame,item.name,11,5,246,23,13,true)
-    text(frame,item.origin,11,28,245,17,10,false,palette.muted)
-    local b=button(frame,item.kind=="Pack" and "APPLY" or "PLAY",286,9,76,33,true)
+    round(frame,10);Design:metal(frame,true)
+    local isEmote=item.kind=="Emote"
+    -- Single clean title: origin labels were decorative clutter.
+    text(frame,item.name,11,11,isEmote and 197 or 258,28,17,true)
+    local b=button(frame,isEmote and "PLAY" or "APPLY",
+        isEmote and 222 or 286,7,isEmote and 72 or 76,37,true)
     trackConnection(b.MouseButton1Click,function()
-        if item.kind=="Pack" then
-            task.spawn(function() activatePack(item) end)
-        else
+        if isEmote then
             task.spawn(function() playEmote(item) end)
+        else
+            task.spawn(function() activatePack(item) end)
         end
     end)
+    if isEmote then
+        local assign=button(frame,"KEY",302,7,60,37,false)
+        assign.TextColor3=palette.purple
+        trackConnection(assign.MouseButton1Click,function()
+            openFastKeyPicker(item)
+        end)
+    end
     local key=itemKey(item)
-    local fav=button(frame,favorites[key] and "★" or "☆",369,9,37,33,false)
+    local fav=button(frame,favorites[key] and "★" or "☆",369,7,37,37,false)
     fav.TextSize=18
     fav.TextColor3=palette.purple
     trackConnection(fav.MouseButton1Click,function()
@@ -1164,12 +2176,13 @@ local function listItem(item,index)
 end
 local function settingLine(value,index,callback)
     local b=new("TextButton",list,{
-        LayoutOrder=index,Size=UDim2.new(1,-6,0,42),
+        LayoutOrder=index,Size=UDim2.new(1,-6,0,46),
         BackgroundColor3=palette.row,BorderSizePixel=0,
-        Text=value,Font=Enum.Font.GothamBold,TextSize=13,
+        Text=value,Font=Enum.Font.GothamBold,TextSize=16,
         TextColor3=palette.white
     })
-    round(b,8)
+    round(b,9)
+    Design:button(b,false)
     trackConnection(b.MouseButton1Click,callback)
 end
 local function filtered()
@@ -1197,7 +2210,7 @@ render=function()
     if not running then return end
     clearList()
     for name,b in pairs(tabs) do
-        b.BackgroundColor3=name==currentTab and Color3.fromRGB(94,51,151) or palette.row
+        Design:select(b,name==currentTab)
     end
     searchBox.Visible=currentTab~="Settings"
     searchCatalog.Visible=currentTab=="Emotes" or currentTab=="Packs"
@@ -1234,6 +2247,26 @@ render=function()
             end
             render()
         end)
+        settingLine("Clear saved animation ID cache",6,function()
+            table.clear(catalogAnimationIds)
+            for _,pack in ipairs(packList) do
+                pack.playableClips=nil
+            end
+            catalogCacheDirty=true
+            queueCatalogCacheSave()
+            say(type(writefile)=="function"
+                and "Saved animation IDs cleared. Reapply a pack to refresh."
+                or "Session cache cleared (file storage unavailable).")
+        end)
+        for i=1,FAST_KEY_COUNT do
+            local slotIndex=i
+            local bound=fastKeyBindings[i]
+            settingLine("Clear F"..i..": "..(bound and bound.name or "Empty"),6+i,function()
+                clearFastKey(slotIndex)
+                say("FastKey F"..slotIndex.." cleared.")
+                render()
+            end)
+        end
         return
     end
     local items=filtered()
@@ -1271,6 +2304,7 @@ render()
 if not getRig() then
     say("R15 + server-created Animator required.")
 else
-    say("Ready • FE depends on Roblox/game permissions")
+    say("Ready | "..restoredCatalogIds.." cached")
 end
 -- Catalog browsing is on-demand to avoid infinite loading or startup stalls.
+Design:start()
