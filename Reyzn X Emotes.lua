@@ -1,5 +1,5 @@
 --[[
- Reyzn X Emotes v1.7-fastkeys-test | standalone universal R15 emote & animation browser
+ Reyzn X Emotes v1.8-logo-8keys-test | standalone universal R15 emote & animation browser
  Built from scratch. Inspired by standard emote catalog and Animator techniques.
  Designed for desktop + mobile. No purchase/access-control bypass.
  FE note: only animations that Roblox successfully loads on a SERVER-CREATED
@@ -506,9 +506,10 @@ if type(isfile)=="function" and type(readfile)=="function" then
         end
     end)
 end
--- Five independently draggable on-screen emote shortcuts.
+-- Eight independently draggable on-screen emote shortcuts.
 -- Files are optional; when unavailable the bindings last for this session.
 local fastKeyFile="ReyznXEmotes_fastkeys_v1.json"
+local FAST_KEY_COUNT=8 -- backwards-compatible with saved F1-F5
 local fastKeyBindings={}
 local fastKeyPositions={}
 local fastKeyButtons={}
@@ -525,7 +526,7 @@ do
         if ok and type(raw)=="string" and #raw<16000 then
             local decodedOk,data=pcall(function() return HttpService:JSONDecode(raw) end)
             if decodedOk and type(data)=="table" and data.version==1 then
-                for i=1,5 do
+                for i=1,FAST_KEY_COUNT do
                     local entry=type(data.slots)=="table" and data.slots[tostring(i)]
                     if type(entry)=="table" and validFastKeyId(entry.id) then
                         local fallback=entry.fallback
@@ -554,7 +555,7 @@ end
 local function saveFastKeys()
     if type(writefile)~="function" then return end
     local slots,positions={},{}
-    for i=1,5 do
+    for i=1,FAST_KEY_COUNT do
         local entry=fastKeyBindings[i]
         if entry then
             slots[tostring(i)]={
@@ -583,7 +584,7 @@ local function updateFastKeyButton(i)
         and Color3.fromRGB(82,43,140) or Color3.fromRGB(33,29,47)
 end
 local function assignFastKey(i,item)
-    if type(i)~="number" or i<1 or i>5 or item.kind~="Emote" then return end
+    if type(i)~="number" or i<1 or i>FAST_KEY_COUNT or item.kind~="Emote" then return end
     fastKeyBindings[i]={kind="Emote",id=item.id,name=item.name,fallback=item.fallback}
     updateFastKeyButton(i)
     saveFastKeys()
@@ -1195,9 +1196,15 @@ if workspace.CurrentCamera then
 end
 
 local header=new("Frame",root,{BackgroundTransparency=1,Size=UDim2.new(1,0,0,66)})
-text(header,"REYZN X",16,9,150,29,21,true,palette.white)
-text(header,"EMOTES",122,9,115,29,21,true,palette.purple)
-text(header,"Universal R15  /  Emotes + Animation Packs",17,38,475,18,11,false,palette.muted)
+local headerLogo=new("ImageLabel",header,{
+    Name="BrandLogo",Position=UDim2.fromOffset(12,8),
+    Size=UDim2.fromOffset(50,50),Image="",
+    BackgroundTransparency=1,ScaleType=Enum.ScaleType.Fit
+})
+local headerLogoFallback=text(header,"R",18,10,40,40,29,true,palette.purple)
+headerLogoFallback.TextXAlignment=Enum.TextXAlignment.Center
+text(header,"REYZN X",73,14,145,32,22,true,palette.white)
+text(header,"EMOTES",207,14,123,32,22,true,palette.purple)
 local minimize=button(header,"−",548,14,30,30,false)
 local close=button(header,"×",586,14,30,30,false)
 local bar=new("Frame",root,{Position=UDim2.fromOffset(0,66),
@@ -1218,7 +1225,6 @@ for i,name in ipairs({"Emotes","Packs","Favorites","Settings"}) do
         if render then render() end
     end)
 end
-text(sidebar,"R15  •  FE depends",9,296,125,22,10,false,palette.muted)
 
 searchBox=new("TextBox",body,{
     Position=UDim2.fromOffset(12,11),Size=UDim2.fromOffset(277,37),
@@ -1245,10 +1251,10 @@ local prev=button(body,"◀ Prev",12,286,88,34,false)
 local next=button(body,"Next ▶",351,286,88,34,false)
 local pageLabel=text(body,"Page 1",115,287,225,33,12,true,palette.muted)
 pageLabel.TextXAlignment=Enum.TextXAlignment.Center
-statusText=text(root,"Ready • Reproduction may be restricted by game",15,428,598,22,11,false,palette.muted)
+statusText=text(root,"Ready",15,428,598,22,11,false,palette.muted)
 
 -- FastKeys are independent ScreenGui children, so they remain visible
--- when the main window is minimized. Five small keys start at upper-right,
+-- when the main window is minimized. Eight small keys start at upper-right,
 -- safely above the usual mobile jump button.
 local FAST_SIZE=48
 local FAST_GAP=5
@@ -1260,7 +1266,7 @@ local function openFastKeyPicker(item)
     if not item or item.kind~="Emote" then return end
     fastKeyPendingEmote=item
     fastKeyPickerTitle.Text="Assign emote: "..tostring(item.name)
-    for i=1,5 do
+    for i=1,FAST_KEY_COUNT do
         local bound=fastKeyBindings[i]
         fastKeyPickerOptions[i].Text="F"..i.."\n"..(bound and bound.name or "Empty")
     end
@@ -1269,8 +1275,8 @@ end
 
 fastKeyPicker=new("Frame",root,{
     Name="FastKeyChooser",
-    Position=UDim2.fromOffset(99,173),
-    Size=UDim2.fromOffset(430,122),
+    Position=UDim2.fromOffset(99,153),
+    Size=UDim2.fromOffset(430,171),
     BackgroundColor3=palette.panel,BorderSizePixel=0,
     ZIndex=40,Visible=false
 })
@@ -1294,11 +1300,11 @@ trackConnection(pickerClose.MouseButton1Click,function()
     fastKeyPicker.Visible=false
     fastKeyPendingEmote=nil
 end)
-for i=1,5 do
+for i=1,FAST_KEY_COUNT do
     local slotIndex=i
     local key=new("TextButton",fastKeyPicker,{
-        Position=UDim2.fromOffset(13+(i-1)*83,48),
-        Size=UDim2.fromOffset(73,61),
+        Position=UDim2.fromOffset(15+((i-1)%4)*103,48+math.floor((i-1)/4)*58),
+        Size=UDim2.fromOffset(94,51),
         BackgroundColor3=palette.row,BorderSizePixel=0,
         Font=Enum.Font.GothamBold,TextSize=10,
         TextColor3=palette.white,TextWrapped=true,
@@ -1320,9 +1326,12 @@ local function viewportDimensions()
     local camera=workspace.CurrentCamera
     return camera and camera.ViewportSize or Vector2.new(900,600)
 end
-for i=1,5 do
+for i=1,FAST_KEY_COUNT do
     local slotIndex=i
-    local initial=UDim2.new(1,-(10+(5-i)*(FAST_SIZE+FAST_GAP)+FAST_SIZE),0,75)
+    local col=(i-1)%2
+    local row=math.floor((i-1)/2)
+    local initial=UDim2.new(1,-(10+(1-col)*(FAST_SIZE+FAST_GAP)+FAST_SIZE),
+        0,82+row*(FAST_SIZE+FAST_GAP))
     local saved=fastKeyPositions[i]
     if saved then initial=UDim2.fromScale(saved.x,saved.y) end
     local key=new("TextButton",gui,{
@@ -1613,7 +1622,7 @@ render=function()
                 and "Saved animation IDs cleared. Reapply a pack to refresh."
                 or "Session cache cleared (file storage unavailable).")
         end)
-        for i=1,5 do
+        for i=1,FAST_KEY_COUNT do
             local slotIndex=i
             local bound=fastKeyBindings[i]
             settingLine("Clear F"..i..": "..(bound and bound.name or "Empty"),6+i,function()
@@ -1659,6 +1668,6 @@ render()
 if not getRig() then
     say("R15 + server-created Animator required.")
 else
-    say("Ready • FE depends on game | "..restoredCatalogIds.." saved IDs")
+    say("Ready | "..restoredCatalogIds.." cached")
 end
 -- Catalog browsing is on-demand to avoid infinite loading or startup stalls.
