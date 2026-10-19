@@ -1,5 +1,5 @@
 --[[
- Reyzn X Emotes v1.3 | standalone universal R15 emote & animation browser
+ Reyzn X Emotes v1.4 | standalone universal R15 emote & animation browser
  Built from scratch. Inspired by standard emote catalog and Animator techniques.
  Designed for desktop + mobile. No purchase/access-control bypass.
  FE note: only animations that Roblox successfully loads on a SERVER-CREATED
@@ -56,8 +56,6 @@ local movementAnimations={}
 local currentMovement=nil
 local currentHumanoid=nil
 local currentAnimator=nil
-local appliedCatalogHumanoid=nil
-local originalCatalogDescriptions=setmetatable({},{__mode="k"})
 local activeEmoteTrack=nil
 local activeEmoteAnimation=nil
 local activeEmoteRequested=false
@@ -458,40 +456,9 @@ local function killMovement()
     currentHumanoid=nil
     currentAnimator=nil
 end
--- Preserve the character's appearance and restore only animation properties.
-local descriptionSlots = {
-    run="RunAnimation", walk="WalkAnimation", jump="JumpAnimation",
-    fall="FallAnimation", climb="ClimbAnimation", idle1="IdleAnimation",
-    swim="SwimAnimation",
-}
-local function restoreCatalogDescription()
-    local hum=appliedCatalogHumanoid
-    if not hum then return true end
-    local original=originalCatalogDescriptions[hum]
-    if not original or not hum.Parent then
-        appliedCatalogHumanoid=nil
-        return true
-    end
-    local ok,err=pcall(function()
-        local current=hum:GetAppliedDescription()
-        for slot,property in pairs(descriptionSlots) do
-            current[property]=original[property]
-        end
-        hum:ApplyDescriptionAsync(current)
-        current:Destroy()
-    end)
-    if ok then
-        appliedCatalogHumanoid=nil
-        originalCatalogDescriptions[hum]=nil
-    else
-        warn("[Reyzn X Emotes] Couldn't restore catalog animations:",err)
-    end
-    return ok
-end
 local function stopEverything()
     stopCurrentEmote()
     killMovement()
-    restoreCatalogDescription()
     selectedPack=nil
 end
 
@@ -647,8 +614,8 @@ local function resolveBundlePack(pack)
 end
 
 local function loadSelectedPack(pack)
-    if appliedCatalogHumanoid and not restoreCatalogDescription() then
-        say("Could not restore previous catalog pack.")
+    if type(pack.clips) ~= "table" then
+        say("This pack has no playable animation IDs.")
         return false
     end
     killMovement()
@@ -678,57 +645,32 @@ local function loadSelectedPack(pack)
     idleVariant="idle1"
     idleSwitchAt=os.clock()+8
     say("Pack selected: "..pack.name.." | Preview in movement")
+    -- Loading an AnimationTrack does not guarantee that Roblox can download
+    -- the clip. Check Length after a short delay and report blocked assets.
+    if pack.bundleId then
+        task.delay(4,function()
+            if not running or selectedPack~=pack or currentAnimator~=animator then return end
+            local playable,total=0,0
+            for _,t in pairs(movementTracks) do
+                total=total+1
+                local length=guarded(function() return t.Length end)
+                if length and length>0 then playable=playable+1 end
+            end
+            if playable==0 then
+                warn("[Reyzn X Emotes] None of the bundle clips loaded. Animation asset permissions may block this bundle.")
+                say("This bundle's clips are unavailable or restricted in this game.")
+            elseif playable<total then
+                say(string.format("%s: %d/%d clips loaded (some restricted).",pack.name,playable,total))
+            else
+                say("Movement pack loaded: "..pack.name.." | FE depends on game.")
+            end
+        end)
+    end
     return true
 end
-local function applyCatalogPack(pack)
-    local char,hum=getRig()
-    if not hum then
-        say("R15 + Animator required.")
-        return false
-    end
-    -- Avatar bundle item IDs are normally applied through a HumanoidDescription.
-    -- They can fail when fed directly into Animator:LoadAnimation.
-    local original=originalCatalogDescriptions[hum]
-    if not original then
-        original=guarded(function() return hum:GetAppliedDescription() end)
-        if not original then
-            say("This game doesn't allow reading your avatar description.")
-            return false
-        end
-        originalCatalogDescriptions[hum]=original
-    end
-    local current=guarded(function() return hum:GetAppliedDescription() end)
-    if not current then
-        say("Cannot read current avatar description.")
-        return false
-    end
-    local changed=0
-    for slot,property in pairs(descriptionSlots) do
-        local id=pack.clips[slot]
-        if id and id>0 then
-            current[property]=id
-            changed=changed+1
-        end
-    end
-    if changed<3 then
-        current:Destroy()
-        say("This bundle doesn't contain enough R15 movement clips.")
-        return false
-    end
-    say("Applying "..pack.name.." via avatar animations...")
-    local ok,err=pcall(function() hum:ApplyDescriptionAsync(current) end)
-    current:Destroy()
-    if not ok then
-        warn("[Reyzn X Emotes] ApplyDescription failed:",err)
-        say("Roblox blocked applying this pack. See console for details.")
-        return false
-    end
-    killMovement()
-    selectedPack=pack
-    appliedCatalogHumanoid=hum
-    say("Applied "..pack.name.." via avatar system. FE may vary.")
-    return true
-end
+-- Catalog animation bundle assets are resolved to their movement clip IDs
+-- and loaded through the same client Animator path as built-in packs.
+-- Humanoid:ApplyDescriptionAsync is server-only, so never call it here.
 local function activatePack(pack)
     if not pack.bundleId then
         loadSelectedPack(pack)
@@ -740,7 +682,7 @@ local function activatePack(pack)
             return
         end
     end
-    applyCatalogPack(pack)
+    loadSelectedPack(pack)
 end
 
 local function selectPose(pose,multiplier)
@@ -822,13 +764,7 @@ trackConnection(player.CharacterAdded,function(char)
             -- selectedPack survives killMovement; relink on respawn.
             task.wait(0.4)
             if running and player.Character==char then
-                if selectedPack.bundleId then
-                    -- Apply the catalog bundle to the newly spawned Humanoid.
-                    appliedCatalogHumanoid=nil
-                    activatePack(selectedPack)
-                else
-                    loadSelectedPack(selectedPack)
-                end
+                activatePack(selectedPack)
             end
         end
     end)
@@ -1173,8 +1109,7 @@ render=function()
         settingLine("Remove movement pack",2,function()
             selectedPack=nil
             killMovement()
-            local restored=restoreCatalogDescription()
-            say(restored and "Default character movement restored." or "Restore failed; see console.")
+            say("Default movement restored (custom tracks removed).")
         end)
         settingLine("Auto-apply on respawn: "..(autoApply and "ON" or "OFF"),3,function()
             autoApply=not autoApply
