@@ -1,5 +1,5 @@
 --[[
- Reyzn X Emotes v1.8-logo-8keys-test | standalone universal R15 emote & animation browser
+ Reyzn X Emotes v1.9-emote-priority-test | standalone universal R15 emote & animation browser
  Built from scratch. Inspired by standard emote catalog and Animator techniques.
  Designed for desktop + mobile. No purchase/access-control bypass.
  FE note: only animations that Roblox successfully loads on a SERVER-CREATED
@@ -598,7 +598,52 @@ end
 
 local function itemKey(it) return it.kind..":"..tostring(it.id) end
 
+-- Emote / movement-pack coexistence.
+-- Do not destroy or unselect a movement pack while an emote is playing.
+-- Official Roblox emotes can use the server-created Animator, so capture
+-- their Action tracks and restore movement when they stop.
+local emoteGeneration=0
+local emoteMovementPaused=false
+local emoteAnimator=nil
+local emotePlayedConnection=nil
+local emoteStoppedConnection=nil
+
+local function disconnectEmoteListeners()
+    if emotePlayedConnection then
+        emotePlayedConnection:Disconnect()
+        emotePlayedConnection=nil
+    end
+    if emoteStoppedConnection then
+        emoteStoppedConnection:Disconnect()
+        emoteStoppedConnection=nil
+    end
+end
+
+local function finishEmote(token)
+    if token~=emoteGeneration then return end
+    disconnectEmoteListeners()
+    emoteMovementPaused=false
+    emoteAnimator=nil
+    activeEmoteRequested=false
+    -- The next movement heartbeat chooses the correct locomotion pose.
+    -- Resetting currentMovement also forces a replay if the last pose
+    -- had been stopped to give the emote priority.
+    currentMovement=nil
+    if activeEmoteAnimation then
+        if activeEmoteTrack then
+            pcall(function() activeEmoteTrack:Destroy() end)
+        end
+        pcall(function() activeEmoteAnimation:Destroy() end)
+        activeEmoteAnimation=nil
+    end
+    activeEmoteTrack=nil
+end
+
 local function stopCurrentEmote()
+    emoteGeneration=emoteGeneration+1
+    disconnectEmoteListeners()
+    emoteMovementPaused=false
+    emoteAnimator=nil
     if activeEmoteTrack then
         pcall(function() activeEmoteTrack:Stop(0.15) end)
         activeEmoteTrack=nil
@@ -608,7 +653,63 @@ local function stopCurrentEmote()
         activeEmoteAnimation=nil
     end
     activeEmoteRequested=false
+    currentMovement=nil
 end
+
+local function beginEmotePriority(animator)
+    local token=emoteGeneration
+    emoteMovementPaused=true
+    emoteAnimator=animator
+    -- Stop only the custom locomotion tracks. Keep them loaded in memory,
+    -- retain selectedPack, and let updateMovement resume them afterward.
+    for _,track in pairs(movementTracks) do
+        pcall(function()
+            if track.IsPlaying then track:Stop(0.12) end
+        end)
+    end
+    currentMovement=nil
+
+    local function captureTrack(track)
+        if not running or token~=emoteGeneration
+            or emoteAnimator~=animator or activeEmoteTrack then return end
+        for _,movementTrack in pairs(movementTracks) do
+            if movementTrack==track then return end
+        end
+        -- Ignore ordinary idle/walk/run tracks fired by Animate.
+        local priority=guarded(function() return track.Priority end)
+        if not priority or priority.Value<Enum.AnimationPriority.Action.Value then return end
+        activeEmoteTrack=track
+        if emotePlayedConnection then
+            emotePlayedConnection:Disconnect()
+            emotePlayedConnection=nil
+        end
+        emoteStoppedConnection=track.Stopped:Connect(function()
+            -- Small fade buffer before restoring locomotion.
+            task.delay(0.18,function()
+                if running and token==emoteGeneration then finishEmote(token) end
+            end)
+        end)
+    end
+    emotePlayedConnection=animator.AnimationPlayed:Connect(captureTrack)
+
+    -- Some emote APIs return a Boolean rather than a track. In that case
+    -- inspect the Animator once after invoking the emote. If no track was
+    -- observable, remove the priority hold rather than freeze walking.
+    task.delay(1.25,function()
+        if not running or token~=emoteGeneration
+            or not emoteMovementPaused or activeEmoteTrack then return end
+        local found=guarded(function() return animator:GetPlayingAnimationTracks() end)
+        if type(found)=="table" then
+            for _,track in ipairs(found) do
+                captureTrack(track)
+                if activeEmoteTrack then break end
+            end
+        end
+        if not activeEmoteTrack then finishEmote(token) end
+    end)
+    return token,captureTrack
+end
+
 local function killMovement()
     for _,t in pairs(movementTracks) do
         pcall(function() t:Stop(0.12) end)
@@ -632,60 +733,72 @@ local function playEmote(item)
     local char,hum,animator=getRig()
     if not hum then say("R15 + server Animator required.");return end
     stopCurrentEmote()
-    -- Official emotes must be installed on the character's description.
-    -- Attempt normal Roblox emote playback before a direct Animation fallback.
+    local token,captureTrack=beginEmotePriority(animator)
+    -- Use the original official Roblox playback methods to keep FE behavior.
+    -- The controller only pauses local movement tracks until the emote stops.
     if not item.fallback then
         local description=hum:FindFirstChildOfClass("HumanoidDescription")
         local alias="RZX_"..tostring(item.id)
         if description then
             pcall(function() description:AddEmote(alias,item.id) end)
             local ok,played=pcall(function() return hum:PlayEmoteAsync(alias) end)
+            if token~=emoteGeneration then return end
             if ok and played then
                 activeEmoteRequested=true
-                say("Emote requested: "..item.name.." | FE depends on game")
+                say("Emote requested: "..item.name.." | movement resumes afterward")
                 return
             end
         end
-        -- Some environments expose a Roblox-owned emote playback entry point.
-        -- It is optional and may be blocked. Failure simply falls through.
+        -- Optional Roblox-owned playback entry point; unchanged.
         local ok,trackOrResult=pcall(function()
             return hum:PlayEmoteAndGetAnimTrackById(item.id)
         end)
+        if token~=emoteGeneration then return end
         if ok and trackOrResult then
             if typeof(trackOrResult)=="Instance" and trackOrResult:IsA("AnimationTrack") then
-                activeEmoteTrack=trackOrResult
+                captureTrack(trackOrResult)
             end
             activeEmoteRequested=true
-            say("Emote invoked: "..item.name.." | FE unverified")
+            say("Emote invoked: "..item.name.." | movement resumes afterward")
             return
         end
     end
-    -- Fallback: can play an accessible animation SEQUENCE, but does not
-    -- bypass catalog asset permissions and may be invisible to others.
+    -- Accessible sequence fallback, without changing asset permissions.
     local animation=Instance.new("Animation")
     animation.AnimationId="rbxassetid://"..tostring(item.fallback or item.id)
     local ok,track=pcall(function() return animator:LoadAnimation(animation) end)
+    if token~=emoteGeneration then
+        if ok and track then pcall(function() track:Destroy() end) end
+        animation:Destroy()
+        return
+    end
     if not ok or not track then
         animation:Destroy()
+        finishEmote(token)
         say("Unavailable or restricted: "..item.name)
         return
     end
     track.Priority=Enum.AnimationPriority.Action4
     track.Looped=loopEmotes
+    activeEmoteAnimation=animation
     if not pcall(function() track:Play(0.15,1,emoteSpeed) end) then
         pcall(function() track:Destroy() end)
         animation:Destroy()
+        activeEmoteAnimation=nil
+        finishEmote(token)
         say("Failed to play: "..item.name)
         return
     end
-    activeEmoteTrack=track
-    activeEmoteAnimation=animation
-    say("Playing "..item.name.." | Other-player visibility not guaranteed")
+    captureTrack(track)
+    activeEmoteRequested=true
+    say("Playing "..item.name.." | movement resumes afterward")
     task.delay(2,function()
-        if running and activeEmoteTrack==track then
+        if running and token==emoteGeneration and activeEmoteTrack==track then
             local length=guarded(function() return track.Length end)
             if not length or length<=0 then
                 say("Animation may be unavailable / not loaded in this game.")
+                pcall(function() track:Stop(0.15) end)
+                finishEmote(token)
             end
         end
     end)
@@ -969,6 +1082,9 @@ local function selectPose(pose,multiplier)
 end
 local function updateMovement()
     if not selectedPack then return end
+    -- A playing emote has exclusive control of movement animation layers.
+    -- As soon as it stops, selectedPack and its loaded tracks are unchanged.
+    if emoteMovementPaused then return end
     local now=os.clock()
     if now-lastUpdate<0.09 then return end
     lastUpdate=now
