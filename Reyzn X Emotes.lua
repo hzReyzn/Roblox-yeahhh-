@@ -1325,6 +1325,7 @@ Design=(function()
         self.tweens[o]=t
         t.Completed:Once(function()if self.tweens[o]==t then self.tweens[o]=nil end end)
         t:Play()
+        return t
     end
     function self:register(o,parent)
         local scope=self.scopes[parent]
@@ -1339,16 +1340,33 @@ Design=(function()
         elseif o:IsA("UIStroke")then values.Transparency=o.Transparency end
         if next(values)then
             self.alphas[o]=values
-            for property,value in pairs(values)do o[property]=1-(1-value)*self.factors[scope] end
+            local factor=(scope=="window" and self.windowGroup) and 1 or self.factors[scope]
+            for property,value in pairs(values)do o[property]=1-(1-value)*factor end
         end
     end
     function self:base(o,property,value)
         local values=self.alphas[o]
         if values then values[property]=value end
-        o[property]=1-(1-value)*(self.factors[self.scopes[o]] or 1)
+        local scope=self.scopes[o]
+        local grouped=(scope=="window" and self.windowGroup)or(scope=="launcher" and self.logoGroup)
+        o[property]=1-(1-value)*(grouped and 1 or self.factors[scope] or 1)
     end
     function self:fade(scope,value)
         self.factors[scope]=value
+        if scope=="window" and self.windowGroup then
+            -- Fade the already-composited window once. Fading each surface
+            -- separately reveals the cards and text through their own backdrop.
+            self.windowGroup.GroupTransparency=1-value
+            self.windowPresentation.Scale=.96+.04*value
+            if self.windowContent.Parent==self.windowGroup then
+                self.windowContent.Position=UDim2.fromOffset(378,341.5+(1-value)*10)
+            end
+            return
+        elseif scope=="launcher" and self.logoGroup then
+            self.logoGroup.GroupTransparency=1-value
+            self.logoPresentation.Scale=.9+.1*value
+            return
+        end
         for o,values in pairs(self.alphas)do
             if self.scopes[o]==scope and o.Parent then
                 for property,base in pairs(values)do o[property]=1-(1-base)*value end
@@ -1558,11 +1576,9 @@ Design=(function()
         self.launcherOpacity=new("NumberValue",gui,{Name="LauncherVisualOpacity",Value=0})
         watch(self.opacity.Changed,function()
             self:fade("window",self.opacity.Value)
-            if self.opacity.Value==0 and self.minimized then root.Visible=false end
         end)
         watch(self.launcherOpacity.Changed,function()
             self:fade("launcher",self.launcherOpacity.Value)
-            if self.launcherOpacity.Value==0 and not self.minimized and self.launcher then self.launcher.Visible=false end
         end)
         watch(UserInputService.InputEnded,function(input)
             for _,r in pairs(self.buttons)do
@@ -1580,15 +1596,65 @@ Design=(function()
         self.launcher=launcher;self.scopes[launcher]="launcher"
         self.alphas[launcher]={BackgroundTransparency=1,ImageTransparency=0}
         self.scopes[fallback]="launcher";self.alphas[fallback]={BackgroundTransparency=1,TextTransparency=0}
-        self.logoFire=self:fire(self.gui,"MinimizedLogoFire",66,66)
-        self.logoFire.host.ZIndex=59;self.logoFire.host.Visible=false
+        -- The image and its fire share a moving parent: no one-frame trail
+        -- behind the pointer, and no orphan flames during a restore.
+        self.logoAnchor=fx("Frame",self.gui,{Name="LogoMotionRoot",Size=UDim2.fromOffset(66,66),
+            Position=launcher.Position,BackgroundTransparency=1,ZIndex=60,Visible=false})
+        self.logoGroup=fx("CanvasGroup",self.logoAnchor,{Name="LogoComposite",Position=UDim2.fromOffset(-40,-108),
+            Size=UDim2.fromOffset(146,194),BackgroundTransparency=1,GroupTransparency=1,ZIndex=1})
+        local content=fx("Frame",self.logoGroup,{Name="LogoContent",AnchorPoint=Vector2.new(.5,.5),
+            Position=UDim2.fromOffset(73,141),Size=UDim2.fromOffset(66,66),BackgroundTransparency=1,ZIndex=1})
+        self.logoPresentation=fx("UIScale",content,{Scale=1})
+        launcher.Parent=content;launcher.Position=UDim2.fromOffset(0,0)
+        self.logoFire=self:fire(content,"MinimizedLogoFire",66,66)
+        self.logoFire.host.ZIndex=0;self.logoFire.host.Visible=false
         self:fade("launcher",0)
     end
+    function self:prepareWindow()
+        local children=self.root:GetChildren()
+        -- Static-size compositor with room for the original flame silhouette.
+        -- The normal window leaves the compositor after the transition, keeping
+        -- text crisp and avoiding a persistent large render texture on mobile.
+        self.windowGroup=fx("CanvasGroup",self.root,{Name="WindowComposite",Position=UDim2.fromOffset(-64,-112),
+            Size=UDim2.fromOffset(756,603),BackgroundTransparency=1,GroupTransparency=1,ZIndex=3})
+        self.windowContent=fx("Frame",self.windowGroup,{Name="WindowContent",AnchorPoint=Vector2.new(.5,.5),
+            Position=UDim2.fromOffset(378,341.5),Size=UDim2.fromOffset(628,459),BackgroundTransparency=1,ZIndex=3})
+        self.windowPresentation=fx("UIScale",self.windowContent,{Scale=1})
+        for _,child in ipairs(children)do if child:IsA("GuiObject")then child.Parent=self.windowContent end end
+        for o,values in pairs(self.alphas)do
+            if self.scopes[o]=="window" and o.Parent then
+                for property,value in pairs(values)do o[property]=value end
+            end
+        end
+    end
     function self:setMinimized(value)
+        if not self.alive or (self.minimized==value and self.motionGeneration)then return end
+        if self.cancelDrag then self.cancelDrag()end
+        self.motionGeneration=(self.motionGeneration or 0)+1
+        local generation=self.motionGeneration
         self.minimized=value
-        if value then self.launcher.Visible=true else self.root.Visible=true end
-        self:tween(self.opacity,.26,{Value=value and 0 or 1})
-        self:tween(self.launcherOpacity,.26,{Value=value and 1 or 0})
+        self.transitioning=true
+        self.windowGroup.Visible=true
+        self.windowContent.Parent=self.windowGroup
+        self:fade("window",self.opacity.Value)
+        self:fade("launcher",self.launcherOpacity.Value)
+        self.root.Visible=true;self.launcher.Visible=true;self.logoAnchor.Visible=true
+        local duration=.3
+        local transition=self:tween(self.opacity,duration,{Value=value and 0 or 1})
+        self:tween(self.launcherOpacity,duration,{Value=value and 1 or 0})
+        transition.Completed:Once(function(state)
+            if not self.alive or generation~=self.motionGeneration or state~=Enum.PlaybackState.Completed then return end
+            self.transitioning=false
+            self.root.Visible=not value
+            self.launcher.Visible=value;self.logoAnchor.Visible=value
+            self.windowFire.host.Visible=not value
+            self.logoFire.host.Visible=value
+            -- No animated Position is ever written to the draggable root.
+            self.windowContent.Parent=self.root
+            self.windowContent.Position=UDim2.fromScale(.5,.5)
+            self.windowPresentation.Scale=1
+            self.windowGroup.Visible=false
+        end)
     end
     function self:loadArtwork()
         task.spawn(function()
@@ -1619,6 +1685,7 @@ Design=(function()
         end)
     end
     function self:start()
+        self:prepareWindow()
         self:setMinimized(false);self:loadArtwork()
         local elapsed,budget=0,0
         watch(RunService.Heartbeat,function(dt)
@@ -1629,20 +1696,20 @@ Design=(function()
             local showWindow=self.root.Visible and self.opacity.Value>.001
             self.windowFire.host.Visible=showWindow
             if showWindow then
-                updateFire(self.windowFire,elapsed,self.opacity.Value)
+                updateFire(self.windowFire,elapsed,1)
                 for _,r in pairs(self.buttons)do if r.selected then r.edgeLight.Offset=Vector2.new(math.sin(elapsed*.45)*.26,0)end end
             end
             local showLogo=self.launcher.Visible and self.launcherOpacity.Value>.001
             self.logoFire.host.Visible=showLogo
             if showLogo then
-                self.logoFire.host.Position=self.launcher.Position
-                updateFire(self.logoFire,elapsed,self.launcherOpacity.Value)
+                updateFire(self.logoFire,elapsed,1)
             end
         end)
     end
     function self:destroy()
         if not self.alive then return end
         self.alive=false
+        if self.cancelDrag then self.cancelDrag()end
         for _,c in ipairs(self.links)do c:Disconnect()end
         for _,r in pairs(self.buttons)do for _,c in ipairs(r.links)do c:Disconnect()end end
         for _,t in pairs(self.tweens)do t:Cancel()end
@@ -2019,106 +2086,128 @@ local function setMinimized(value)
         fastKeyPendingEmote=nil
     end
 end
-local launcherGesture
-trackConnection(logoLauncher.InputBegan,function(input)
-    if not running or launcherGesture then return end
-    if input.UserInputType==Enum.UserInputType.MouseButton1
-       or input.UserInputType==Enum.UserInputType.Touch then
-        launcherGesture={
-            start=input.Position,
-            origin=logoLauncher.AbsolutePosition,
-            input=input,moved=false
-        }
+-- One pointer owns a drag. Hit testing is global so text, artwork and
+-- CanvasGroup children cannot swallow a header/background touch.
+do
+    local gesture=nil
+    local renderLink=nil
+    local stateLink=nil
+    local function point(input)return Vector2.new(input.Position.X,input.Position.Y)end
+    local function contains(object,p)
+        if not object or not object.Visible then return false end
+        local pos,size=object.AbsolutePosition,object.AbsoluteSize
+        return p.X>=pos.X and p.Y>=pos.Y and p.X<=pos.X+size.X and p.Y<=pos.Y+size.Y
     end
-end)
-trackConnection(UserInputService.InputChanged,function(input)
-    local g=launcherGesture
-    if not g then return end
-    local mouse=g.input.UserInputType==Enum.UserInputType.MouseButton1
-       and input.UserInputType==Enum.UserInputType.MouseMovement
-    if input~=g.input and not mouse then return end
-    local delta=input.Position-g.start
-    if delta.Magnitude>=9 then g.moved=true end
-    if g.moved then
-        local cam=workspace.CurrentCamera
-        local view=cam and cam.ViewportSize or Vector2.new(900,600)
-        logoLauncher.Position=UDim2.fromOffset(
-            math.clamp(g.origin.X+delta.X,4,math.max(4,view.X-70)),
-            math.clamp(g.origin.Y+delta.Y,40,math.max(40,view.Y-70))
-        )
+    local function overControl(p)
+        if contains(close,p)or contains(minimize,p)or contains(fastKeyPicker,p)then return true end
+        if contains(searchBox,p)or contains(searchCatalog,p)or contains(list,p)
+            or contains(prev,p)or contains(next,p)then return true end
+        for _,tab in pairs(tabs)do if contains(tab,p)then return true end end
+        for _,key in ipairs(fastKeyButtons)do if contains(key.button,p)then return true end end
+        return false
     end
-end)
-trackConnection(UserInputService.InputEnded,function(input)
-    local g=launcherGesture
-    if not g then return end
-    local mouseUp=g.input.UserInputType==Enum.UserInputType.MouseButton1
-       and input.UserInputType==Enum.UserInputType.MouseButton1
-    if input~=g.input and not mouseUp then return end
-    launcherGesture=nil
-    if running and not g.moved then setMinimized(false) end
-end)
-trackConnection(minimize.MouseButton1Click,function()
-    setMinimized(true)
-end)
-
--- Free-area drag: top, sides, bottom and empty panel space.
--- Never steal gestures from tabs, search, buttons or the scrolling list.
-local drag=false
-local dragOrigin,dragPosition,dragTouch
-local function pointInside(object,point)
-    if not object or not object.Visible then return false end
-    local pos,size=object.AbsolutePosition,object.AbsoluteSize
-    return point.X>=pos.X and point.Y>=pos.Y
-        and point.X<=pos.X+size.X and point.Y<=pos.Y+size.Y
+    local function foreignControl(p)
+        -- gethui may not be a BasePlayerGui. In that case the owned control
+        -- rectangles above still work; do not rely on executor-specific APIs.
+        local ok,objects=pcall(function()return uiParent:GetGuiObjectsAtPosition(p.X,p.Y)end)
+        if ok and type(objects)=="table"then
+            for _,o in ipairs(objects)do
+                if o:IsDescendantOf(gui)then return false end
+                if o.Visible and o.Active and (o:IsA("GuiButton")or o:IsA("TextBox"))then return true end
+            end
+        end
+        return false
+    end
+    local function apply()
+        local g=gesture
+        if not g or not running then return end
+        local delta=g.latest-g.start
+        if not g.moved and delta.Magnitude<g.threshold then return end
+        g.moved=true
+        local dx,dy=delta.X,delta.Y
+        if g.logo then
+            local size=g.target.AbsoluteSize
+            local minimum=g.parentOrigin
+            local maximum=minimum+g.parentSize
+            dx=math.clamp(g.screenOrigin.X+dx,minimum.X+4,math.max(minimum.X+4,maximum.X-size.X-4))-g.screenOrigin.X
+            dy=math.clamp(g.screenOrigin.Y+dy,minimum.Y+40,math.max(minimum.Y+40,maximum.Y-size.Y-4))-g.screenOrigin.Y
+        end
+        -- Convert screen-pixel deltas to parent-relative coordinates. Moving a
+        -- UIScaled window must not amplify or shrink the pointer movement.
+        g.target.Position=UDim2.new(g.origin.X.Scale+dx/g.parentSize.X,g.origin.X.Offset,
+            g.origin.Y.Scale+dy/g.parentSize.Y,g.origin.Y.Offset)
+    end
+    local function finish(cancelled)
+        local g=gesture
+        if not g then return end
+        if not cancelled then apply()end
+        gesture=nil
+        if renderLink then renderLink:Disconnect();renderLink=nil end
+        if stateLink then stateLink:Disconnect();stateLink=nil end
+        if not cancelled and running and g.logo and not g.moved then setMinimized(false)end
+    end
+    Design.cancelDrag=function()finish(true)end
+    local function begin(input)
+        if not running or gesture then return end
+        local kind=input.UserInputType
+        if kind~=Enum.UserInputType.MouseButton1 and kind~=Enum.UserInputType.Touch then return end
+        local p=point(input)
+        local logo=Design.logoAnchor.Visible and Design.launcherOpacity.Value>.2 and contains(logoLauncher,p)
+        if not logo and (minimized or Design.transitioning or not contains(root,p)or overControl(p))then return end
+        if foreignControl(p)then return end
+        if UserInputService:GetFocusedTextBox()then return end
+        local target=logo and Design.logoAnchor or root
+        local parent=target.Parent
+        local dimensions=parent.AbsoluteSize
+        if dimensions.X<1 or dimensions.Y<1 then return end
+        gesture={input=input,logo=logo,target=target,start=p,latest=p,origin=target.Position,
+            parentSize=dimensions,parentOrigin=parent.AbsolutePosition,
+            screenOrigin=target.AbsolutePosition,moved=false,threshold=kind==Enum.UserInputType.Touch and 6 or 3}
+        stateLink=input:GetPropertyChangedSignal("UserInputState"):Connect(function()
+            if input.UserInputState==Enum.UserInputState.Cancel then finish(true)
+            elseif input.UserInputState==Enum.UserInputState.End then
+                if gesture and input.UserInputType==Enum.UserInputType.Touch then gesture.latest=point(input)end
+                finish(false)
+            end
+        end)
+        -- This connection exists only while a pointer is held. No accumulating
+        -- Position tweens, inertia, or permanent per-frame drag polling.
+        renderLink=RunService.PreRender:Connect(function()
+            local g=gesture
+            if not g then return end
+            if g.input.UserInputType==Enum.UserInputType.Touch then g.latest=point(g.input)end
+            apply()
+        end)
+    end
+    trackConnection(UserInputService.InputBegan,begin)
+    trackConnection(UserInputService.InputChanged,function(input)
+        local g=gesture
+        if not g then return end
+        if input==g.input or (g.input.UserInputType==Enum.UserInputType.MouseButton1
+            and input.UserInputType==Enum.UserInputType.MouseMovement)then g.latest=point(input)end
+    end)
+    trackConnection(UserInputService.InputEnded,function(input)
+        local g=gesture
+        if not g then return end
+        if input==g.input or (g.input.UserInputType==Enum.UserInputType.MouseButton1
+            and input.UserInputType==Enum.UserInputType.MouseButton1)then
+            if input.UserInputType==Enum.UserInputType.Touch then g.latest=point(input)end
+            finish(false)
+        end
+    end)
+    trackConnection(UserInputService.WindowFocusReleased,function()finish(true)end)
+    trackConnection(gui:GetPropertyChangedSignal("AbsoluteSize"),function()finish(true)end)
+    trackConnection(root:GetPropertyChangedSignal("AbsoluteSize"),function()finish(true)end)
+    -- Continue sinking touches in empty window regions to the GUI, instead of
+    -- allowing the game camera underneath to take the same gesture.
+    for _,surface in ipairs({root,header,bar,sidebar,body,statusText,pageLabel,Design.surface,Design.backgroundImages[1]})do
+        surface.Active=true
+    end
+    for _,object in ipairs(header:GetDescendants())do
+        if object:IsA("TextLabel")or object:IsA("ImageLabel")then object.Active=true end
+    end
 end
-local function overInteractiveControl(point)
-    if pointInside(close,point) or pointInside(minimize,point) then return true end
-    if minimized then return false end
-    if pointInside(searchBox,point) or pointInside(searchCatalog,point)
-        or pointInside(list,point) or pointInside(prev,point)
-        or pointInside(next,point) then return true end
-    for _,tab in pairs(tabs) do
-        if pointInside(tab,point) then return true end
-    end
-    return false
-end
-local function beginDrag(input)
-    if not running or drag then return end
-    local kind=input.UserInputType
-    if kind~=Enum.UserInputType.MouseButton1
-        and kind~=Enum.UserInputType.Touch then return end
-    if not pointInside(root,input.Position)
-        or pointInside(fastKeyPicker,input.Position)
-        or overInteractiveControl(input.Position) then return end
-    drag=true
-    dragOrigin=input.Position
-    dragPosition=root.Position
-    dragTouch=input
-end
--- Listen on every noninteractive background, not just the header.
--- This includes the edge margins on the root Frame.
-for _,surface in ipairs({root,header,bar,sidebar,body,statusText,pageLabel,Design.surface,Design.backgroundImages[1]}) do
-    surface.Active=true
-    trackConnection(surface.InputBegan,beginDrag)
-end
-trackConnection(UserInputService.InputChanged,function(input)
-    if not drag or not dragTouch then return end
-    local isPointer=(dragTouch.UserInputType==Enum.UserInputType.MouseButton1
-        and input.UserInputType==Enum.UserInputType.MouseMovement)
-    if input==dragTouch or isPointer then
-        local delta=input.Position-dragOrigin
-        root.Position=UDim2.new(dragPosition.X.Scale,dragPosition.X.Offset+delta.X,
-            dragPosition.Y.Scale,dragPosition.Y.Offset+delta.Y)
-    end
-end)
-trackConnection(UserInputService.InputEnded,function(input)
-    if input==dragTouch or (dragTouch
-        and dragTouch.UserInputType==Enum.UserInputType.MouseButton1
-        and input.UserInputType==Enum.UserInputType.MouseButton1) then
-        drag=false
-        dragTouch=nil
-    end
-end)
+trackConnection(minimize.MouseButton1Click,function()setMinimized(true)end)
 
 local function closeUI()
     if not running then return end
